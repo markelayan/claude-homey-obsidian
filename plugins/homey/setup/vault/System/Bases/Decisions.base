@@ -1,0 +1,21 @@
+filters:
+  and:
+    - type == "decision"
+    - '!file.inFolder("System")'
+views:
+  - type: table
+    name: Recent
+    groupBy:
+      property: file.folder
+      direction: ASC
+    order:
+      - file.name
+      - summary
+      - status
+      - superseded_by
+    sort:
+      - property: file.name
+        direction: DESC
+    limit: 15
+    columnSize:
+      note.summary: 460

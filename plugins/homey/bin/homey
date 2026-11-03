@@ -1,0 +1,1185 @@
+#!/usr/bin/env python3
+"""homey: read the vault named in .claude/homey.json. No Obsidian needed. Only task commands write.
+  homey find <term>            path | summary, capped
+  homey get <note>[#heading]   one section (capped), or the summary
+  homey now                    one line: Next, Inbox, Stale, Tasks
+  homey data                   JSON for the mod (never fails; {"error": ...} on bad config)
+  homey tasks                  JSON list of task notes
+  homey task <owner> "<title>" "<brief>" [--kind code|bug|deploy|docs] [--files "a,b"]   new task note; prints its path
+  homey link <task> <commit|pr|issue|branch> <value>   set that link field; a later value replaces it
+  homey comment <task> <author> "<text>"     add a line under Comments
+  homey status <task> <status>               set the status
+  homey result <task> "<text>"               replace the Result section
+  homey deploy <task> [--go <question note>]   run a Deploy task's steps once and record before and after; a step that matches a danger or order-path pattern needs a go note
+  homey upgrade                              add to this project's config, agents, templates and Tasks.base what the kit's setup has and it lacks; never changes a value already set
+  homey hosts [--age]                        run the fixed host checks from the config, rewrite the System state note; --age prints minutes since the last read
+  homey changelog "<line>" --task <task> [--commit <hash>]   one row at the top of today's section of the changelog note
+  homey bug "<what happened>" [--from <who>]   a bug note for capturer plus a row in the Bugs note; prints its path
+  homey bug-state <task> <reported|verified|not reproduced|fixed>   set the bug state; fixed and not reproduced close the row
+  homey state [<section> '<text>']         the status note: no arguments prints it; else replaces that section and fills Repo
+  homey ask "<question>" "<why>" "<context>" ["<label>|<reply>"...]   put a question for the user in the pane
+  homey answer <task> "<text>"               record the user's answer and close the question
+  homey handoff [--session <id>]             a cheap model writes Homey/Session handoff.md from this session; frees the main role
+  homey claim-main                           make the session working in this folder the main one
+  homey agent-add <role> <local_id> <model>  record a started agent session as the owner of that role
+  homey agent-add <role> --headless <model>  start the role with claude -p once and record it, with no app session
+  homey check                                is Obsidian, which Homey requires, ready
+  homey later <task>                         keep a question open, under For later in the pane
+  homey take <session>                       JSON list of messages waiting for that open session; claims them
+  homey advise <task> ["<question>"] [--plan <note>]...   a task note for the advisor, with a fixed packet; its result goes in <task>
+  homey escalate <note> [--plan <note>]... [--again]   one senior call, after the junior and its gaps; saves and prints it
+  homey advisor <model> [role...] | senior <model> | senior off | off   set the junior, with the agents allowed to ask it, or the senior
+Config: $HOMEY_CONFIG, else .claude/homey.json found upward from the current directory.
+Only the folders in `domains` are read. All settings come from the config."""
+import json, os, re, shlex, shutil, subprocess, sys, time
+from pathlib import Path
+from urllib.parse import quote
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+import homey_tasks as ht
+import homey_advisor as ha
+import homey_handoff as hh
+
+REQUIRED = ["vault", "dailyDir", "inboxDir", "domains", "skipDirs", "types", "nextPattern",
+            "dailyGlob", "staleDays", "statuses", "limits", "band", "panes"]
+LIMITS = ["findLines", "getLines", "getChars", "rowChars", "decisions", "dataRows", "noteBytes"]
+
+class Bad(Exception):
+    pass
+
+def short(s, n=140):
+    s = " ".join(str(s).split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+def load():
+    env = os.environ.get("HOMEY_CONFIG")
+    path = Path(env).resolve() if env else None
+    if path is None:
+        d = Path.cwd().resolve()
+        for p in [d, *d.parents]:
+            if (p / ".claude" / "homey.json").is_file():
+                path = p / ".claude" / "homey.json"
+                break
+    if path is None or not path.is_file():
+        raise Bad("no .claude/homey.json found")
+    try:
+        cfg = json.loads(path.read_text())
+    except Exception as e:
+        raise Bad("homey.json is not valid JSON: " + short(e, 80))
+    if not isinstance(cfg, dict):
+        raise Bad("homey.json must be an object")
+    miss = [k for k in REQUIRED if k not in cfg]
+    if miss:
+        raise Bad("homey.json missing: " + ", ".join(miss))
+    lim = cfg["limits"] if isinstance(cfg["limits"], dict) else {}
+    badl = [k for k in LIMITS if not isinstance(lim.get(k), int) or lim[k] < 1]
+    if badl:
+        raise Bad("homey.json limits missing or not positive ints: " + ", ".join(badl))
+    if not isinstance(cfg["domains"], list) or not isinstance(cfg["panes"], list) or not isinstance(cfg["types"], dict):
+        raise Bad("homey.json domains/panes must be lists, types an object")
+    try:
+        re.compile(cfg["nextPattern"], re.M)
+    except re.error as e:
+        raise Bad("nextPattern is not a valid regex: " + short(e, 60))
+    return cfg, path.parent.parent
+
+def setup():
+    global CFG, ROOT, VAULT, LIM, USER_ID
+    CFG, ROOT = load()
+    USER_ID = (CFG.get("user") or {}).get("id") or "user"
+    VAULT = (ROOT / CFG["vault"]).resolve()
+    LIM = CFG["limits"]
+
+def notes():
+    skip = set(CFG["skipDirs"])
+    for dom in CFG["domains"]:
+        base = VAULT / str(dom)
+        if not base.is_dir():
+            continue
+        for dp, dn, fn in os.walk(base):
+            dn[:] = [d for d in dn if d not in skip and not d.startswith(".")]
+            for f in fn:
+                if f.endswith(".md"):
+                    yield Path(dp) / f
+
+def read(p):
+    """Text of a note, or None if unreadable or larger than noteBytes."""
+    try:
+        if p.stat().st_size > LIM["noteBytes"]:
+            return None
+        return p.read_text(errors="replace")
+    except Exception:
+        return None
+
+def front(text):
+    m = re.match(r"---\n(.*?)\n---\n?", text, re.S)
+    fm = {}
+    if m:
+        for line in m.group(1).splitlines():
+            k, sep, v = line.partition(":")
+            if sep and not line.startswith((" ", "-")):
+                fm[k.strip()] = v.strip().strip("\"'")
+    return fm, text[m.end():] if m else text
+
+def rel(p):
+    return str(p.relative_to(VAULT))
+
+def typed(kind):
+    """(path, frontmatter) of readable notes whose type matches config types[kind]."""
+    want = CFG["types"].get(kind)
+    for p in notes():
+        t = read(p)
+        if t is None:
+            continue
+        fm, _ = front(t)
+        if want and fm.get("type") == want:
+            yield p, fm
+
+def cmd_find(args):
+    term = " ".join(args).lower().strip()
+    if not term:
+        raise Bad("usage: homey find <term>")
+    hits = []
+    for p in notes():
+        t = read(p)
+        if t is None:
+            continue
+        fm, _ = front(t)
+        summ = fm.get("summary", "")
+        name = term in p.stem.lower()
+        if name or term in summ.lower():
+            hits.append((0 if name else 1, rel(p), summ))
+    hits.sort()
+    n = LIM["findLines"]
+    for _, path, summ in hits[:n]:
+        print(short(f"{path} | {summ}", LIM["rowChars"]))
+    if len(hits) > n:
+        print(f"... {len(hits) - n} more; narrow the term")
+    if not hits:
+        print("no match")
+
+def resolve(name):
+    n = name.lower().removesuffix(".md")
+    allp = list(notes())
+    exact = [p for p in allp if p.stem.lower() == n or rel(p).lower().removesuffix(".md") == n]
+    if exact:
+        return exact[0]
+    part = [p for p in allp if n in p.stem.lower()]
+    return part[0] if part else None
+
+def section(body, heading):
+    out, level, want = [], None, heading.strip().lower()
+    for ln in body.splitlines():
+        m = re.match(r"(#+)\s+(.*?)\s*$", ln)
+        if level is None:
+            if m and m.group(2).lower() == want:
+                level = len(m.group(1))
+                out.append(ln)
+        else:
+            if m and len(m.group(1)) <= level:
+                break
+            out.append(ln)
+    return "\n".join(out).rstrip() if out else None
+
+def capped(text):
+    lines = text.splitlines()
+    total_l, total_c = len(lines), len(text)
+    cut = False
+    if len(lines) > LIM["getLines"]:
+        lines, cut = lines[: LIM["getLines"]], True
+    text = "\n".join(lines)
+    if len(text) > LIM["getChars"]:
+        text, cut = text[: LIM["getChars"]], True
+    if cut:
+        text += f"\n[truncated: showed {len(text.splitlines())} of {total_l} lines, {len(text)} of {total_c} chars; limits getLines={LIM['getLines']}, getChars={LIM['getChars']}]"
+    return text
+
+def cmd_get(args):
+    ref = " ".join(args)
+    if not ref:
+        raise Bad('usage: homey get "<note>#<heading>"')
+    name, _, heading = ref.partition("#")
+    p = resolve(name.strip())
+    if not p:
+        raise Bad(f"no note in domains: {name}")
+    t = read(p)
+    if t is None:
+        raise Bad(f"cannot read {rel(p)} (unreadable or over noteBytes)")
+    fm, body = front(t)
+    if not heading:
+        print(short(f"{rel(p)} | {fm.get('summary', '(no summary)')}", LIM["rowChars"]))
+        return
+    s = section(body, heading)
+    if s is None:
+        heads = [m.group(2) for m in re.finditer(r"^#+\s+(.*?)\s*$", body, re.M)]
+        raise Bad(f"no heading '{heading}' in {rel(p)}; headings: " + ", ".join(heads[:12]))
+    print(capped(s))
+
+def open_tasks():
+    n = 0
+    for p in notes():
+        t = read(p)
+        if t is not None:
+            n += len(re.findall(r"^\s*- \[ \]", t, re.M))
+    return n
+
+def latest_next():
+    d = VAULT / str(CFG["dailyDir"])
+    files = sorted(d.glob(CFG["dailyGlob"])) if d.is_dir() else []
+    pat = re.compile(CFG["nextPattern"], re.M)
+    for f in reversed(files):
+        t = read(f)
+        found = pat.findall(t) if t else []
+        if found:
+            v = found[-1]
+            return short(v if isinstance(v, str) else v[0], 3 * LIM["rowChars"])
+    return ""
+
+def projects():
+    now, stale_s = time.time(), CFG["staleDays"] * 86400
+    out = []
+    for p, fm in typed("project"):
+        st = fm.get("status", CFG["statuses"][0] if CFG["statuses"] else "")
+        stale = st == "active" and now - p.stat().st_mtime > stale_s
+        out.append({"name": short(p.stem, 60), "status": st, "summary": short(fm.get("summary", ""), LIM["rowChars"]), "stale": stale, "link": note_link(p)})
+    return out
+
+def decisions():
+    out = []
+    for p, fm in typed("decision"):
+        m = re.match(r"(\d{4}-\d{2}-\d{2})", p.stem)
+        out.append({"name": short(p.stem, 80), "date": fm.get("created") or (m.group(1) if m else time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))),
+                    "summary": short(fm.get("summary", ""), LIM["rowChars"]), "link": note_link(p),
+                    "status": fm.get("status") or ("superseded" if fm.get("superseded_by") else "decided")})
+    out.sort(key=lambda x: (x["date"], x["name"]), reverse=True)
+    return out[: LIM["decisions"]]
+
+def table(pane):
+    f, h = pane.get("file"), pane.get("heading")
+    if not isinstance(f, str) or not isinstance(h, str) or not f or not h:
+        return {"headers": [], "rows": [], "error": f"pane {pane.get('id', '?')}: needs file and heading"}
+    p = VAULT / f
+    if not p.is_file():
+        return {"headers": [], "rows": [], "links": []}
+    t = read(p)
+    if t is None:
+        return {"headers": [], "rows": [], "error": "cannot read " + short(f, 60)}
+    s = section(front(t)[1], h)
+    if s is None:
+        return {"headers": [], "rows": [], "error": "no heading " + short(h, 40) + " in " + short(f, 40)}
+    def cells(text):
+        got = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in text.splitlines() if ln.strip().startswith("|")]
+        return [r for r in got if not all(re.fullmatch(r":?-{2,}:?", c) for c in r)]
+    rows = cells(s)
+    also = pane.get("also")
+    if isinstance(also, str) and also:
+        extra = section(front(t)[1], also)
+        rows += cells(extra)[1:] if extra else []
+    clean = lambda c: short(re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", c), LIM["rowChars"])
+    rows = [[clean(c) for c in r] for r in rows]
+    body = rows[1:][: LIM["dataRows"]]
+    stems = {q.stem: q for q in notes()}
+    return {"headers": rows[0] if rows else [], "rows": body, "links": [note_link(stems[r[-1]]) if r[-1] in stems else "" for r in body]}
+
+def inbox_count():
+    d = VAULT / str(CFG["inboxDir"])
+    return len(list(d.glob("*.md"))) if d.is_dir() else 0
+
+def read_json(path, default):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return default
+
+def alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except PermissionError:
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+def minutes(since):
+    m = int(max(0, time.time() - since) // 60)
+    return "under 1 min" if m < 1 else f"{m} min"
+
+def comment_text(line):
+    return re.sub(r"^[-*] +(?:[\w-]+: )?", "", line)
+
+# The watcher sees a session go busy only on its next pass, so a task just moved to doing is not stopped yet.
+DOING_GRACE = 60
+
+def run_words(run, stall_minutes):
+    """A run in plain words, from the transcript activity the watcher records. The app shows the session as idle throughout."""
+    words = "Working for " + minutes(run["started"])
+    last = run.get("lastActivity", run["started"])
+    denied = run.get("denied", 0)
+    if denied:
+        words += f"; denied by a guard {denied} times"
+    if run.get("stoppedAt"):
+        return "needs", "Stopping: quiet for " + minutes(last)
+    if time.time() - last >= stall_minutes * 60:
+        return "needs", words + "; quiet for " + minutes(last)
+    return "working", words + ("; last activity " + minutes(last) + " ago" if run.get("lastActivity") else "")
+
+def task_state(x, owner_run, owner_live, watcher_on, stall_minutes=10):
+    """What is happening to this task right now: (kind, words)."""
+    st, who = x["status"], x["owner"]
+    if st == "review":
+        return "finished", "Finished"
+    if st == "blocked":
+        return "needs", "Stuck: " + comment_text(x["comments"][-1]) if x["comments"] else "Stuck, no reason given"
+    if st == "done":
+        return "done", "Done"
+    if owner_run and owner_run["path"] == x["path"]:
+        return run_words(owner_run, stall_minutes)
+    if st == "doing":
+        if owner_live == "busy":
+            return "working", "Working in the app"
+        if time.time() - Path(x["path"]).stat().st_mtime < DOING_GRACE:
+            return "working", "Just started"
+        return "needs", "Stopped without finishing"
+    if not who:
+        return "needs", "No session picked"
+    if not watcher_on:
+        return "needs", "Not started: watcher is off"
+    if owner_run:
+        return "queued", "After its current task"
+    if owner_live:
+        return "held", "Open in the app; message left for it"
+    return "queued", "Starting in a few seconds"
+
+def advice_line(task):
+    """Advice is for Homey: the pane shows only what was recommended, and who said it."""
+    out = []
+    for who, text in (("Junior", task["advice"]), ("Senior", task["senior"])):
+        m = re.search(r"(?m)^Recommendation:[ \t]*(.+)$", text)
+        if m:
+            out.append(f"{who} recommends: {short(m.group(1), LIM['rowChars'])}")
+    return "\n".join(out)
+
+def tasks_board():
+    t = CFG.get("tasks")
+    if not isinstance(t, dict):
+        return {"statuses": [], "counts": {}, "items": [], "agents": [], "asks": [], "watcher": {"on": False}, "homeySession": ""}
+    state_dir = ROOT / t["stateDir"]
+    status = read_json(state_dir / "status.json", {})
+    watcher_on = time.time() - status.get("at", 0) < 3 * t["tickSeconds"] + 30
+    live = status.get("live") or {}
+    runs = {k: v for k, v in read_json(state_dir / "state.json", {}).get("runs", {}).items() if alive(v.get("pid"))}
+    owners = t["owners"]
+    tasks = [x for x in ht.all_tasks((VAULT / t["dir"]).resolve()) if not x.get("bad")]
+    summary_of = {x["path"]: x["summary"] or x["name"] for x in tasks}
+    plain = lambda text: str(text).replace(str(VAULT) + "/", "")
+    asks = [{"name": x["name"], "note": rel(Path(x["path"])), "question": short(x["summary"], LIM["rowChars"]), "why": short(x["brief"], LIM["rowChars"]), "options": x["options"], "later": bool(x["later"]), "noteLink": note_link(Path(x["path"])), "advice": advice_line(x), "advising": ha.is_advising(state_dir, x["path"])}
+            for x in tasks if x["owner"] == USER_ID and x["status"] != "done"]
+    items = []
+    for x in tasks:
+        if x["owner"] == USER_ID:
+            continue
+        o = owners.get(x["owner"], {})
+        kind, words = task_state(x, runs.get(x["owner"]), live.get(o.get("sessionId")), watcher_on, t.get("stallMinutes", 10))
+        items.append({"name": x["name"], "owner": x["owner"], "status": x["status"], "summary": short(x["summary"], LIM["rowChars"]),
+                      "recent": [short(plain(c), LIM["rowChars"]) for c in x["comments"][-3:]], "result": short(plain(x.get("result", "")), LIM["rowChars"]),
+                      "state": kind, "stateText": short(words, LIM["rowChars"]), "link": app_link(t, o), "noteLink": note_link(Path(x["path"]))})
+    statuses = t["statuses"]
+    items.sort(key=lambda x: (statuses.index(x["status"]) if x["status"] in statuses else len(statuses), x["name"]))
+    counts = {st: sum(i["status"] == st for i in items) for st in statuses}
+    agents = []
+    for name, o in owners.items():
+        run, app = runs.get(name), live.get(o.get("sessionId"))
+        waiting = [i for i in items if i["owner"] == name and i["status"] == "todo"]
+        if run:
+            state, detail = "working", short(summary_of.get(run["path"], "a task"), 80) + ", " + minutes(run["started"])
+        elif app == "busy":
+            state, detail = "working", "Working in the app"
+        elif app:
+            state, detail = "open", "Open in the app, not working"
+        else:
+            state, detail = "idle", "Free; a task wakes it"
+        if waiting and not run:
+            detail += f"; {len(waiting)} task waiting" if len(waiting) == 1 else f"; {len(waiting)} tasks waiting"
+        agents.append({"name": name, "state": state, "detail": detail, "link": app_link(t, o)})
+    return {"statuses": statuses, "counts": counts, "items": [i for i in items if i["status"] != "done"][: LIM["dataRows"]],
+            "agents": agents, "asks": asks, "watcher": {"on": watcher_on}, "homeySession": t.get("homeySession", ""), "userId": USER_ID, "obsidian": bool(shutil.which("obsidian"))}
+
+def note_link(path):
+    """Opens a note in Obsidian."""
+    vault = (CFG.get("hooks") or {}).get("obsidianVault", "")
+    if not vault:
+        return ""
+    name = str(Path(path).resolve().relative_to(VAULT))
+    return "obsidian://open?vault=" + quote(vault) + "&file=" + quote(name[:-3] if name.endswith(".md") else name)
+
+def app_link(t, owner):
+    return t.get("appLink", "").format(id=owner["appSession"]) if owner.get("appSession") else ""
+
+def data():
+    projs = projects()
+    panes = [p for p in CFG["panes"] if isinstance(p, dict) and isinstance(p.get("id"), str)]
+    tables = {p["id"]: table(p) for p in panes if p.get("type") == "table"}
+    return {"config": {"band": [b for b in CFG["band"] if isinstance(b, str)],
+                       "panes": [{"id": p["id"], "title": short(p.get("title", p["id"]), 20), "type": p.get("type", ""), "style": p.get("style", "")} for p in panes],
+                       "statuses": CFG["statuses"]},
+            "today": time.strftime("%Y-%m-%d"), "next": latest_next(), "inbox": inbox_count(), "stale": sum(p["stale"] for p in projs),
+            "tasks": open_tasks(), "tasksBoard": tasks_board(), "projects": projs[: LIM["dataRows"]], "decisions": decisions(), "tables": tables}
+
+def task_cfg():
+    t = CFG.get("tasks")
+    if not isinstance(t, dict):
+        raise Bad("homey.json missing: tasks")
+    return t
+
+def task_dir():
+    return (VAULT / task_cfg()["dir"]).resolve()
+
+def task_path(ref):
+    """A task note inside the task folder, by path or name. Nothing outside it."""
+    folder = task_dir()
+    name = Path(ref).name
+    p = folder / (name if name.endswith(".md") else name + ".md")
+    if Path(ref).name != ref and (VAULT / ref).resolve() != p and Path(ref).resolve() != p:
+        raise Bad("not a task note: " + short(ref))
+    if not p.is_file():
+        raise Bad("no task note: " + short(ref))
+    return p
+
+def warn(text):
+    """Say it, and go on: a reminder, not a refusal."""
+    print("homey: warning: " + short(text, 220), file=sys.stderr)
+
+def bugs_line(task):
+    """True when the Result has a line starting `Bugs found:` or the last comment's text does."""
+    if any(l.strip().startswith("Bugs found:") for l in (task.get("result") or "").splitlines()):
+        return True
+    last = (task.get("comments") or [""])[-1]
+    return bool(re.match(r"[-*] +[\w-]+: *Bugs found:", last))
+
+def cmd_task_write(c, rest):
+    t = task_cfg()
+    if c == "tasks":
+        print(json.dumps(ht.all_tasks(task_dir())))
+    elif c == "task":
+        kind = None
+        if "--kind" in rest:
+            i = rest.index("--kind")
+            if i + 1 >= len(rest) or rest[i + 1] not in TASK_KINDS:
+                raise Bad("--kind takes one of: " + ", ".join(TASK_KINDS))
+            kind = rest[i + 1]
+            rest = rest[:i] + rest[i + 2:]
+        files = None
+        if "--files" in rest:
+            i = rest.index("--files")
+            if i + 1 >= len(rest) or not rest[i + 1].strip():
+                raise Bad('--files takes a list like "a.py,src/*.js"')
+            files = ",".join(f.strip() for f in rest[i + 1].split(",") if f.strip())
+            rest = rest[:i] + rest[i + 2:]
+        if len(rest) != 3:
+            raise Bad('usage: homey task <owner> "<title>" "<brief>" [--kind code|bug|deploy|docs] [--files "a,b"]')
+        if kind is None and rest[0] == "coder":
+            kind = "code"
+        if rest[0] not in t["owners"]:
+            raise Bad("unknown owner: " + short(rest[0]) + "; owners: " + ", ".join(t["owners"]))
+        if (rest[0] == "coder" or kind == "code") and not files:
+            warn('a code task should list --files "a,b" (the files the coder may edit, from the project root, globs allowed); created without')
+        if kind == "deploy":
+            _, problems = ht.deploy_parts(rest[2])
+            if problems:
+                raise Bad("a deploy task's brief must hold: " + "; ".join(problems))
+        extra = {k: v for k, v in (("kind", kind), ("files", files)) if v}
+        print(rel(ht.create(task_dir(), rest[0], rest[1], rest[2], extra or None)))
+    elif c == "ask":
+        if rest and not rest[0].rstrip().endswith("?"):
+            warn("this reads as a job for the user, not a decision: a command or a next step of the plan is the lead's to do")
+        if len(rest) < 3:
+            raise Bad('usage: homey ask "<question>" "<why>" "<context>" ["<label>|<reply>"...]')
+        pairs = [o.split("|", 1) for o in rest[3:]]
+        if any(len(p) != 2 or not p[0].strip() or not p[1].strip() for p in pairs):
+            raise Bad('options look like "<label>|<reply>"')
+        print(rel(ht.create_ask(task_dir(), USER_ID, rest[0], rest[1], rest[2], [(p[0].strip(), p[1].strip()) for p in pairs])))
+    elif c == "later":
+        if len(rest) != 1:
+            raise Bad("usage: homey later <task>")
+        ht.set_later(task_path(rest[0]), time.strftime("%Y-%m-%d"))
+    elif c == "answer":
+        if len(rest) != 2:
+            raise Bad('usage: homey answer <task> "<text>"')
+        p = task_path(rest[0])
+        cur = ht.read_task(p)
+        if cur.get("owner") != USER_ID:
+            raise Bad("answer works only on a question owned by " + USER_ID + ": " + short(p.stem))
+        if cur.get("status") == "done":
+            raise Bad("already answered: " + short(p.stem))
+        ht.add_comment(p, USER_ID, rest[1])
+        ht.set_result(p, rest[1])
+        ht.set_status(p, "done")
+    elif c == "comment":
+        if len(rest) != 3:
+            raise Bad('usage: homey comment <task> <author> "<text>"')
+        ht.add_comment(task_path(rest[0]), rest[1], rest[2])
+    elif c == "status":
+        if len(rest) != 2:
+            raise Bad("usage: homey status <task> <status>")
+        if rest[1] not in t["statuses"]:
+            raise Bad("unknown status: " + short(rest[1]) + "; statuses: " + ", ".join(t["statuses"]))
+        p = task_path(rest[0])
+        if rest[1] in ("review", "blocked"):
+            cur0 = ht.read_task(p)
+            if cur0.get("owner") != USER_ID and not bugs_line(cur0):
+                warn("moving to " + rest[1] + " with no `Bugs found:` line; add `Bugs found: none` (or the homey bug note names) to the Result or as your last comment")
+        if rest[1] == "review":
+            cur = ht.read_task(p)
+            pr = ht.props(p.read_text())
+            missing = []
+            if not cur.get("result"):
+                missing.append("Result (`homey result`)")
+            if pr.get("kind") == "code" and not (pr.get("commit") or pr.get("pr")):
+                missing.append("commit or pr link (`homey link`)")
+            if missing:
+                warn("moving to review with no " + " and no ".join(missing))
+        if rest[1] == "done":
+            pr = ht.props(p.read_text())
+            if pr.get("kind") == "code" and not (pr.get("commit") or pr.get("pr")):
+                warn("closing a code task with no commit or pr link; `homey link <task> commit <value>` records it")
+            if pr.get("kind") == "code" and not pr.get("docs"):
+                warn("closing a code task with no docs link; a docs task reports first, then `homey link <code task> docs <docs task>`")
+        ht.set_status(p, rest[1])
+    elif c == "link":
+        if len(rest) != 3 or rest[1] not in LINK_FIELDS or not rest[2].strip():
+            raise Bad("usage: homey link <task> <" + "|".join(LINK_FIELDS) + "> <value>")
+        value = rest[2].strip()
+        if rest[1] == "commit" and not re.match(r"https?://", value):
+            r = subprocess.run(["git", "-C", str(ROOT), "cat-file", "-e", value + "^{commit}"], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+            if r.returncode:
+                raise Bad("no such commit in this project's repo: " + short(value, 60))
+        ht.set_prop(task_path(rest[0]), rest[1], value)
+    else:
+        if len(rest) != 2:
+            raise Bad('usage: homey result <task> "<text>"')
+        p = task_path(rest[0])
+        ht.set_result(p, rest[1])
+        ha.deliver(CFG, ROOT / t["stateDir"], p, rest[1], USER_ID)
+
+def write_settings(change):
+    """Change .claude/homey.json and keep it readable."""
+    path = ROOT / ".claude" / "homey.json"
+    full = json.loads(path.read_text())
+    change(full)
+    ht.write(path, json.dumps(full, indent=2) + "\n")
+
+def cmd_handoff(rest):
+    session = rest[1] if len(rest) == 2 and rest[0] == "--session" else task_cfg().get("homeySession")
+    if not session:
+        raise Bad("no main session to hand on")
+    note, tokens, out, cost = hh.write_note(CFG, VAULT, ROOT, session)
+    write_settings(lambda c: c["tasks"].__setitem__("homeySession", ""))
+    subprocess.run(["obsidian", f"vault={VAULT.name}", "daily:append", f"content=## {time.strftime('%H%M')} Handoff\\n- Haiku wrote [[{note.stem}]]\\n- Next: read [[{note.stem}]] and continue from its Next"], capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+    print(f"{rel(note)} written: {tokens} tokens in, {out} out, ${cost:.3f}. Main role is free; the first prompt in a new session in this folder takes it.")
+
+def cmd_claim_main(rest=()):
+    """The named session, or the one busy interactive session in this folder, which is the one running this command."""
+    if len(rest) == 2 and rest[0] == "--session":
+        write_settings(lambda c: c["tasks"].__setitem__("homeySession", rest[1]))
+        print(f"Main session: {rest[1]}")
+        return
+    bin_ = os.path.expanduser(task_cfg().get("claudeBin") or "claude")
+    r = subprocess.run([bin_, "agents", "--json"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    if r.returncode:
+        raise Bad("could not list sessions")
+    here = [e for e in json.loads(r.stdout) if Path(e.get("cwd") or "/").resolve() == ROOT.resolve() and e.get("kind") == "interactive" and e.get("status") == "busy"]
+    if len(here) != 1:
+        raise Bad(f"expected one working session in this folder, found {len(here)}")
+    write_settings(lambda c: c["tasks"].__setitem__("homeySession", here[0]["sessionId"]))
+    print(f"Main session: {here[0]['sessionId']} ({here[0].get('name') or 'unnamed'})")
+
+def app_session_file(local_id):
+    """The desktop app's record of a session, which holds its CLI session id."""
+    base = Path.home() / "Library/Application Support/Claude/claude-code-sessions"
+    found = sorted(base.glob(f"*/*/{local_id}.json"))
+    if not found:
+        raise Bad("no app record for " + short(local_id, 60))
+    return found[0]
+
+def cmd_agent_add_headless(role, model):
+    """Start the role as a plain CLI session (claude -p, once, from the project root) and record it with no app session."""
+    t = task_cfg()
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", role) or role in t["people"]:
+        raise Bad("bad role name: " + short(role, 40))
+    if role in t["owners"]:
+        raise Bad("already recorded: " + role)
+    claude = os.path.expanduser(t.get("claudeBin") or "claude")
+    mode = t.get("permissionMode") or "default"
+    homey = str(Path(__file__).resolve())
+    allowed = [] if mode == "bypassPermissions" else ["--allowedTools", ",".join(t.get("allowedTools") or ["Read", "Glob", "Grep", f"Bash(python3 {homey} *)"])]
+    agent = ["--agent", role] if (ROOT / ".claude" / "agents" / f"{role}.md").is_file() else []
+    prompt = (f"HOMEY-WORKER. You are {role}. Read .claude/agents/{role}.md: that is your job. Work comes as task notes in Tasks/, "
+              "through skill homey-task. Reply with one word: ready.")
+    cmd = [claude, "-p", "--model", model, *agent, "--permission-mode", mode, *allowed, "--output-format", "json", prompt]
+    env = dict(os.environ, HOMEY_CONFIG=str(ROOT / ".claude" / "homey.json"), HOMEY_OWNER=role)
+    env.pop("HOMEY_TASK", None)
+    try:
+        r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise Bad("claude did not run: " + short(e, 80))
+    try:
+        sid = json.loads(r.stdout).get("session_id")
+    except ValueError:
+        sid = None
+    if r.returncode or not sid:
+        raise Bad("no session started: " + short((r.stderr or r.stdout).strip() or "no output", 100))
+    write_settings(lambda c: c["tasks"]["owners"].__setitem__(role, {"sessionId": sid, "model": model}))
+    roster = VAULT / "Homey" / "Agents.md"
+    if roster.exists():
+        with open(roster, "a") as f:
+            f.write(f"| `{role}` | headless | {model} | {time.strftime('%Y-%m-%d')} |\n")
+    print(f"{role}: {sid}")
+
+def cmd_agent_add(rest):
+    if len(rest) == 3 and rest[1] == "--headless":
+        return cmd_agent_add_headless(rest[0], rest[2])
+    if len(rest) != 3:
+        raise Bad("usage: homey agent-add <role> <local_id> <model> | homey agent-add <role> --headless <model>")
+    role, local_id, model = rest
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", role) or role in task_cfg()["people"]:
+        raise Bad("bad role name: " + short(role, 40))
+    cli_id = json.loads(app_session_file(local_id).read_text()).get("cliSessionId")
+    if not cli_id:
+        raise Bad("the session has not started yet; try again after its first reply")
+    write_settings(lambda c: c["tasks"]["owners"].__setitem__(role, {"sessionId": cli_id, "model": model, "appSession": local_id}))
+    roster = VAULT / "Homey" / "Agents.md"
+    if roster.exists() and local_id not in roster.read_text():
+        with open(roster, "a") as f:
+            f.write(f"| `{role}` | `{local_id}` | {model} | {time.strftime('%Y-%m-%d')} |\n")
+    print(f"{role}: {cli_id}")
+
+def cmd_advise(rest):
+    plans, words = [], []
+    it = iter(rest)
+    for w in it:
+        if w == "--plan":
+            plans.append(next(it, ""))
+        else:
+            words.append(w)
+    if len(words) not in (1, 2) or "" in plans:
+        raise Bad('usage: homey advise <task> ["<question>"] [--plan <note>]...')
+    state_dir = ROOT / task_cfg()["stateDir"]
+    print("asked advisor: " + rel(ha.advise(CFG, VAULT, ROOT, state_dir, task_path(words[0]), USER_ID, words[1] if len(words) == 2 else "", plans)))
+
+def cmd_escalate(rest):
+    plans, words, again = [], [], False
+    it = iter(rest)
+    for w in it:
+        if w == "--plan":
+            plans.append(next(it, ""))
+        elif w == "--again":
+            again = True
+        else:
+            words.append(w)
+    if len(words) != 1 or "" in plans:
+        raise Bad("usage: homey escalate <note> [--plan <note>]... [--again]")
+    print(ha.escalate(CFG, VAULT, ROOT, ROOT / task_cfg()["stateDir"], task_path(words[0]), plans, again))
+
+TASK_KINDS = ["code", "bug", "deploy", "docs"]
+LINK_FIELDS = ["commit", "pr", "issue", "branch", "docs"]
+STATE_SECTIONS = ["Goal", "Plan", "Open task", "Done this session", "Decided", "Waiting on user", "Repo", "Hosts", "Next", "Bugs found"]
+
+def repo_line():
+    """Branch, uncommitted count, unpushed count in the project root, or "no git"."""
+    def git(*args):
+        r = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+        return r.stdout.strip() if r.returncode == 0 else None
+    try:
+        branch = git("rev-parse", "--abbrev-ref", "HEAD")
+        if branch is None:
+            return "no git"
+        dirty = len((git("status", "--porcelain") or "").splitlines())
+        ahead = git("rev-list", "--count", "@{u}..HEAD")
+        return f"branch {branch}; {dirty} uncommitted; " + (f"{ahead} unpushed" if ahead is not None else "no upstream")
+    except (OSError, subprocess.SubprocessError):
+        return "no git"
+
+def cmd_state(rest):
+    name = (CFG.get("hooks") or {}).get("statusFile")
+    if not name:
+        raise Bad("homey.json hooks.statusFile is not set")
+    path = (VAULT / name).resolve()
+    if VAULT not in path.parents:
+        raise Bad("statusFile must be inside the vault")
+    if not rest:
+        if not path.is_file():
+            raise Bad("no status note yet: " + name)
+        print(path.read_text())
+        return
+    if len(rest) != 2:
+        raise Bad("usage: homey state <section> '<text>'; sections: " + ", ".join(STATE_SECTIONS))
+    if rest[0] not in STATE_SECTIONS:
+        raise Bad("unknown section: " + short(rest[0]) + "; sections: " + ", ".join(STATE_SECTIONS))
+    if not rest[1].strip():
+        warn(f"empty text: the {rest[0]} section was left as it was")
+        return
+    now = time.strftime("%Y-%m-%d %H:%M")
+    if path.is_file():
+        text = path.read_text()
+        m = re.match(r"---\n(.*?)\n---\n?(.*)", text, re.S)
+        head, body = (m.group(1), m.group(2)) if m else ("", text)
+    else:
+        home = Path((CFG.get("hooks") or {}).get("homeFile", "Home.md")).stem
+        head = ("type: resource\nsummary: \"Where the work stands, so any session can take over\"\n"
+                f"created: {time.strftime('%Y-%m-%d')}\nup: \"[[Homey map]]\"\ntags:\n  - homey\n  - status\naliases:\n  - Status")
+        body = ""
+    found = {}
+    for sm in re.finditer(r"^## (.+?)[ \t]*\n(.*?)(?=^## |\Z)", body, re.M | re.S):
+        found[sm.group(1)] = sm.group(2).strip()
+    found[rest[0]] = " ".join(rest[1].split()) if "\n" not in rest[1].strip() else rest[1].strip()
+    found["Repo"] = repo_line()
+    head = re.sub(r"^updated:.*\n?", "", head, flags=re.M).rstrip("\n") + f"\nupdated: {now}"
+    stamp = {"Next": "next_checked", "Bugs found": "bugs_checked", "Plan": "plan_checked"}.get(rest[0])
+    if stamp:
+        head = re.sub(rf"^{stamp}:.*\n?", "", head, flags=re.M).rstrip("\n") + f"\n{stamp}: \"{time.strftime('%Y-%m-%d %H:%M:%S')}\""
+    out = "---\n" + head + "\n---\n" + "".join(f"## {sec}\n{found[sec]}\n\n" for sec in STATE_SECTIONS if found.get(sec))
+    limit = LIM.get("statusChars", (CFG.get("hooks") or {}).get("limits", {}).get("statusChars", 4000))
+    if len(out) > limit:
+        raise Bad(f"the status note would be {len(out)} characters; the limit is {limit}. Shorten a section")
+    ht.write(path, out)
+    print(rel(path))
+
+def bugs_path():
+    f = CFG.get("bugsFile")
+    if not f:
+        raise Bad("homey.json bugsFile is not set")
+    p = (VAULT / f).resolve()
+    if VAULT not in p.parents:
+        raise Bad("bugsFile must be inside the vault")
+    return p
+
+def bug_reporter():
+    owner = os.environ.get("HOMEY_OWNER")
+    if not owner and os.environ.get("HOMEY_TASK"):
+        try:
+            owner = ht.read_task(os.environ["HOMEY_TASK"]).get("owner")
+        except Exception:
+            owner = None
+    return owner or USER_ID
+
+def cmd_changelog(rest):
+    task = commit = None
+    rest = list(rest)
+    for flag in ("--task", "--commit"):
+        if flag in rest:
+            i = rest.index(flag)
+            if i + 1 >= len(rest) or not rest[i + 1].strip():
+                raise Bad(flag + " takes a value")
+            if flag == "--task":
+                task = rest[i + 1]
+            else:
+                commit = rest[i + 1].strip()
+            rest = rest[:i] + rest[i + 2:]
+    if len(rest) != 1 or not rest[0].strip() or not task:
+        raise Bad('usage: homey changelog "<line>" --task <task> [--commit <hash>]')
+    f = CFG.get("changelogFile")
+    if not f:
+        raise Bad("homey.json changelogFile is not set")
+    path = (VAULT / f).resolve()
+    if VAULT not in path.parents:
+        raise Bad("changelogFile must be inside the vault")
+    tp = task_path(task)
+    commit = commit or ht.props(tp.read_text()).get("commit") or None
+    ht.add_changelog(path, rest[0], tp.stem, commit)
+    print(rel(path))
+
+def cmd_bug(rest):
+    who = None
+    if "--from" in rest:
+        i = rest.index("--from")
+        if i + 1 >= len(rest) or not rest[i + 1].strip():
+            raise Bad("--from takes a name")
+        who = rest[i + 1].strip()
+        rest = rest[:i] + rest[i + 2:]
+    if len(rest) != 1 or not rest[0].strip():
+        raise Bad('usage: homey bug "<what happened>" [--from <who>]')
+    print(rel(ht.add_bug(task_dir(), bugs_path(), rest[0], who or bug_reporter())))
+
+def cmd_bug_state(rest):
+    if len(rest) != 2:
+        raise Bad("usage: homey bug-state <task> <" + "|".join(ht.BUG_STATES) + ">")
+    ht.set_bug_state(bugs_path(), task_path(rest[0]), rest[1])
+
+HOST_LIMIT = 6
+
+def run_check(cmd):
+    """(up, text) for one configured check: the first output line cut to 160 characters, or down with the reason."""
+    try:
+        argv = [os.path.expanduser(a) if a.startswith("~") else a for a in shlex.split(cmd)]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=HOST_LIMIT, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return False, "down: timed out"
+    except (OSError, ValueError) as e:
+        return False, "down: " + short(e, 100)
+    first = next((l.strip() for l in r.stdout.splitlines() if l.strip()), "")
+    if r.returncode == 7:
+        return False, "down: refused"
+    if r.returncode == 28:
+        return False, "down: timed out"
+    if r.returncode:
+        return False, f"down: exit {r.returncode}" + (": " + short(first, 100) if first else "")
+    if first == "000":
+        return False, "down: 000 (no answer)"
+    return True, short(first, 160) if first else "(no output)"
+
+def hosts_path():
+    f = CFG.get("systemStateFile")
+    if not f:
+        raise Bad("homey.json systemStateFile is not set")
+    p = (VAULT / f).resolve()
+    if VAULT not in p.parents:
+        raise Bad("systemStateFile must be inside the vault")
+    return p
+
+def cmd_hosts(rest):
+    path = hosts_path()
+    if rest == ["--age"]:
+        m = re.search(r"^read:\s*\"?([0-9-]+ [0-9:]+)", path.read_text() if path.is_file() else "", re.M)
+        if not m:
+            raise Bad("no reading yet: run `homey hosts`")
+        print(int((time.time() - time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"))) // 60))
+        return
+    if rest:
+        raise Bad("usage: homey hosts | homey hosts --age")
+    body, up, total, now = hosts_read()
+    print(body.rstrip("\n"))
+
+def hosts_read():
+    """Run the fixed checks, rewrite the System state note and the status Hosts line. Returns (table, up, total, time)."""
+    path = hosts_path()
+    checks = CFG.get("hosts") or []
+    if not checks:
+        raise Bad("no hosts in homey.json")
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    rows, up = [], 0
+    for c in checks:
+        ok, text = run_check(c["cmd"])
+        up += ok
+        rows.append(f"| {ht.cell(c['host'])} | {ht.cell(c['check'])} | {ht.cell(text)} | {now} |")
+    front = ('type: index\nsummary: "Host state from fixed checks run by homey hosts, with the time each was read"\n'
+             f"created: {time.strftime('%Y-%m-%d')}\nup: \"[[Homey map]]\"\ntags:\n  - homey\n  - system\naliases:\n  - System state\nread: \"{now}\"")
+    body = "| Host | Check | Result | Read at |\n|---|---|---|---|\n" + "\n".join(rows) + "\n"
+    ht.write(path, "---\n" + front + "\n---\n" + body)
+    if (CFG.get("hooks") or {}).get("statusFile"):
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            cmd_state(["Hosts", f"read {now}: {up} up, {len(checks) - up} down"])
+    return body, up, len(checks), now
+
+def deploy_approval(note_ref):
+    """A go note: a Tasks/ note owned by the user, done, Result starting with Go. Returns (order_path, context)."""
+    need = "a homey-wait question is needed: a Tasks/ note owned by " + USER_ID + ", status done, whose Result starts with Go"
+    try:
+        n = ht.read_task(task_path(note_ref))
+    except Bad:
+        n = {"bad": "no such note"}
+    if n.get("bad") or n.get("owner") != USER_ID or n.get("status") != "done" or not re.match(r"Go\b", n.get("result", "")):
+        raise Bad("no approval: " + need)
+    ctx = ht.optional_section(Path(n["path"]).read_text(), "Context") or ""
+    return n["result"].startswith("Go order path"), ctx
+
+def cmd_deploy(rest):
+    go = None
+    rest = list(rest)
+    if "--go" in rest:
+        i = rest.index("--go")
+        go = rest[i + 1] if i + 1 < len(rest) else ""
+        del rest[i:i + 2]
+    if len(rest) != 1:
+        raise Bad("usage: homey deploy <task> [--go <question note>]")
+    p = task_path(rest[0])
+    props = ht.props(p.read_text())
+    if props.get("kind") != "deploy":
+        raise Bad("not a deploy task: " + short(p.stem))
+    if props.get("deploy"):
+        raise Bad("already deployed at " + props["deploy"] + ": write a new deploy task")
+    parts, problems = ht.deploy_parts(ht.read_task(p)["brief"])
+    if problems:
+        raise Bad("the brief must hold: " + "; ".join(problems))
+    steps = [l[2:].strip() for l in parts["Steps"]]
+    rollback = [l[2:].strip() for l in parts["Rollback"]]
+    hooks = CFG.get("hooks") or {}
+    patterns = list(hooks.get("askFirst") or []) + ([hooks["tradeToolPattern"]] if hooks.get("tradeToolPattern") else [])
+    names = [re.compile(x, re.I) for x in (CFG.get("orderPath") or [])]
+    hits = []
+    for n, step in enumerate(steps, 1):
+        hit = next((pat for pat in patterns if re.search(pat, step)), None) or next((r.pattern for r in names if r.search(step)), None)
+        if hit:
+            hits.append((n, step, hit))
+    if hits:
+        n, step, hit = hits[0]
+        if not go:
+            raise Bad(f"step {n} matches a danger or order-path pattern ({short(hit, 50)}): {short(step, 80)}. Nothing was run. It needs --go <question note> from a homey-wait question answered Go")
+        order_path, ctx = deploy_approval(go)
+        if not order_path:
+            raise Bad(f"step {n} matches a danger or order-path pattern: {short(step, 80)}. Nothing was run. The go note's Result must start with exactly: Go order path")
+        if not re.search(r"Flat confirmed:\s*\S", ctx):
+            raise Bad(f"step {n} matches a danger or order-path pattern: {short(step, 80)}. Nothing was run. The go note's Context must say Flat confirmed:")
+    ht.set_prop(p, "deploy", time.strftime("%Y-%m-%d %H:%M:%S"))
+    out = []
+
+    def save():
+        ht.set_result(p, "\n".join(out))
+    try:
+        body, up, total, at = hosts_read()
+        out += [f"Before (read {at}, {up} of {total} up):", body, ""]
+    except Bad as e:
+        out += ["Before: not read (" + str(e) + ")", ""]
+    save()
+    failed = None
+    out.append("Steps:")
+    for n, step in enumerate(steps, 1):
+        try:
+            r = subprocess.run(step, shell=True, cwd=ROOT, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+            code, text = r.returncode, (r.stdout + r.stderr)
+        except subprocess.TimeoutExpired:
+            code, text = "timed out after 120 s", ""
+        shown = "\n".join("    " + l for l in text.splitlines()[:10])
+        out.append(f"{n}. `{step}` -> exit {code}" + ("\n" + shown if shown else ""))
+        save()
+        if code != 0:
+            failed = n
+            break
+    try:
+        body, up, total, at = hosts_read()
+        out += ["", f"After (read {at}, {up} of {total} up):", body]
+    except Bad as e:
+        out += ["", "After: not read (" + str(e) + ")"]
+    if failed:
+        out += ["", f"FAILED at step {failed}. Rollback was not run. Rollback steps:"] + [f"- {r}" for r in rollback]
+        save()
+        ht.set_status(p, "blocked")
+        print("\n".join(out))
+        sys.exit(1)
+    out += ["", "Deploy done; all steps exited 0."]
+    save()
+    print("\n".join(out))
+
+def merge_defaults(cur, default, path, added):
+    """Add every key of default that cur lacks. Never change a value already set; skip placeholders (empty strings)."""
+    for key, dv in default.items():
+        here = f"{path}.{key}" if path else key
+        if key not in cur:
+            if dv == "":
+                continue
+            cur[key] = json.loads(json.dumps(dv))
+            added.append(here)
+        elif isinstance(cur[key], dict) and isinstance(dv, dict):
+            merge_defaults(cur[key], dv, here, added)
+        elif here == "hooks.checks" and isinstance(cur[key], list):
+            for item in dv:
+                if item not in cur[key]:
+                    cur[key].append(item)
+                    added.append(f"hooks.checks: {item}")
+        elif here == "panes" and isinstance(cur[key], list):
+            have = {x.get("id") for x in cur[key] if isinstance(x, dict)}
+            for pane in dv:
+                if pane.get("id") not in have:
+                    cur[key].append(pane)
+                    added.append(f"panes: {pane.get('id')}")
+
+BASE_COLUMNS = ["kind", "commit", "pr", "issue", "branch", "docs"]
+
+def merge_base(text, default_text):
+    """Add the new Tasks.base columns to the Agents, Current and Closed views, and the Closed view if it is missing. Returns (text, added)."""
+    lines, out, view, added, i = text.splitlines(), [], None, [], 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"    name: (.+)$", line)
+        if m:
+            view = m.group(1).strip()
+        out.append(line)
+        if line == "    order:":
+            j = i + 1
+            block = []
+            while j < len(lines) and re.match(r"      - ", lines[j]):
+                block.append(lines[j])
+                j += 1
+            out += block
+            if view in ("Agents", "Current", "Closed"):
+                have = {b.strip()[2:] for b in block}
+                for col in BASE_COLUMNS:
+                    if col not in have:
+                        out.append(f"      - {col}")
+                        added.append(f"{view}: {col}")
+            i = j
+            continue
+        i += 1
+    new = "\n".join(out) + "\n"
+    if "name: Closed" not in new and "name: Closed" in default_text:
+        k = default_text.index("  - type: table\n    name: Closed")
+        new = new.rstrip("\n") + "\n" + default_text[k:]
+        added.append("Closed view")
+    return new, added
+
+def merge_agent(have, kit):
+    """Add the tools and skills the kit lists to an agent file that lacks them. Keeps what is already there."""
+    def tools(text):
+        m = re.search(r"^tools: *(.*)$", text, re.M)
+        return [x.strip() for x in m.group(1).split(",") if x.strip()] if m else None
+
+    def skills(text):
+        m = re.search(r"^skills:\n((?:  - .*\n)+)", text, re.M)
+        return [x[4:].strip() for x in m.group(1).splitlines()] if m else []
+
+    gained = []
+    want, got = tools(kit), tools(have)
+    if want and got is not None:
+        more = [x for x in want if x not in got]
+        if more:
+            have = re.sub(r"^tools: *.*$", lambda m: "tools: " + ", ".join(got + more), have, count=1, flags=re.M)
+            gained += more
+    more = [x for x in skills(kit) if x not in skills(have)]
+    if more:
+        lines = "".join(f"  - {x}\n" for x in more)
+        if skills(have):
+            have = re.sub(r"^(skills:\n(?:  - .*\n)+)", lambda m: m.group(1) + lines, have, count=1, flags=re.M)
+        else:
+            head, sep, rest = have[4:].partition("\n---\n")
+            have = "---\n" + head + "\nskills:\n" + lines.rstrip("\n") + sep + rest
+        gained += more
+    return have, gained
+
+
+def cmd_upgrade(rest):
+    if rest:
+        raise Bad("usage: homey upgrade")
+    setup = Path(__file__).resolve().parent.parent / "setup"
+    cfg_path = ROOT / ".claude" / "homey.json"
+    default = json.loads((setup / "homey.default.json").read_text())
+    full = json.loads(cfg_path.read_text())
+    added = []
+    merge_defaults(full, default, "", added)
+    if added:
+        ht.write(cfg_path, json.dumps(full, indent=2) + "\n")
+    for a in added:
+        print("config added: " + a)
+    agents = ROOT / ".claude" / "agents"
+    for src in sorted((setup / "agents").glob("*.md")):
+        dst = agents / src.name
+        if not dst.exists():
+            agents.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+            print("agent added: " + src.name)
+        else:
+            text, gained = merge_agent(dst.read_text(), src.read_text())
+            if gained:
+                ht.write(dst, text)
+                print(f"agent {src.name} gained: " + ", ".join(gained))
+    if agents.is_dir():
+        for f in sorted(agents.glob("*.md")):
+            text = f.read_text()
+            if "<vault>" in text:
+                ht.write(f, ht.fill_vault(text, full["hooks"].get("obsidianVault") or VAULT.name, full["vault"]))
+                print("agent vault named: " + f.name)
+    skipped = []
+    base = setup / "vault"
+    for src in sorted((base / "System" / "Templates").glob("*")):
+        dst = VAULT / "System" / "Templates" / src.name
+        if not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+            print("template added: " + src.name)
+        elif dst.read_bytes() != src.read_bytes():
+            skipped.append("System/Templates/" + src.name)
+    tb_src, tb_dst = base / "System" / "Bases" / "Tasks.base", VAULT / "System" / "Bases" / "Tasks.base"
+    if not tb_dst.exists():
+        tb_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(tb_src, tb_dst)
+        print("Tasks.base added")
+    else:
+        new, cols = merge_base(tb_dst.read_text(), tb_src.read_text())
+        if cols:
+            ht.write(tb_dst, new)
+            print("Tasks.base added: " + ", ".join(cols))
+    for name in skipped:
+        print("skipped (differs, left as it is): " + name)
+    if not (added or skipped):
+        print("already up to date")
+
+def cmd_advisor(rest):
+    if not rest:
+        raise Bad("usage: homey advisor <model> [role...] | senior <model> | senior off | off")
+    if rest[0] == "senior":
+        if len(rest) != 2:
+            raise Bad("usage: homey advisor senior <model> | senior off")
+        write_settings(lambda c: c.setdefault("advisor", {}).pop("senior", None) if rest[1] == "off" else c.setdefault("advisor", {}).__setitem__("senior", rest[1]))
+        print("senior advisor " + ("off" if rest[1] == "off" else "on: " + rest[1]))
+        return
+    if rest == ["off"]:
+        write_settings(lambda c: c.pop("advisor", None))
+        print("advisor off")
+        return
+    write_settings(lambda c: c.__setitem__("advisor", {**(c.get("advisor") or {}), "model": rest[0], "agents": rest[1:]}))
+    print(f"advisor on: {rest[0]}; agents allowed: {', '.join(rest[1:]) or 'none'}")
+
+def cmd_check():
+    """Obsidian is required: it holds the memory and is how Homey reads and writes it."""
+    if not shutil.which("obsidian"):
+        raise Bad("Obsidian CLI not found. Homey requires Obsidian: install it and turn on its command line")
+    vault = (CFG.get("hooks") or {}).get("obsidianVault") or VAULT.name
+    try:
+        r = subprocess.run(["obsidian", f"vault={vault}", "version"], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise Bad("Obsidian did not answer; is it open? " + short(e, 60))
+    m = re.match(r"(\d+)\.(\d+)", r.stdout.strip())
+    if r.returncode or not m:
+        raise Bad("Obsidian did not answer; open it, then try again")
+    need = [int(x) for x in str((CFG.get("requires") or {}).get("obsidian", "0.0")).split(".")[:2]]
+    if [int(m.group(1)), int(m.group(2))] < need:
+        raise Bad(f"Obsidian {m.group(0)} is too old; Homey needs {'.'.join(map(str, need))}")
+    known = subprocess.run(["obsidian", "vaults"], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL).stdout
+    if vault not in known:
+        raise Bad(f"Obsidian does not know the vault {vault}: open this folder as a vault in Obsidian")
+    print(f"Obsidian {m.group(0)} ready, vault {vault}")
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] not in ("find", "get", "now", "data", "tasks", "task", "comment", "status", "result", "ask", "answer", "later", "link", "state", "bug", "bug-state", "changelog", "hosts", "deploy", "upgrade", "take", "advise", "escalate", "advisor", "check", "handoff", "claim-main", "agent-add"):
+        print(__doc__)
+        sys.exit(2)
+    c, rest = a[0], a[1:]
+    try:
+        setup()
+        if c == "find": cmd_find(rest)
+        elif c == "get": cmd_get(rest)
+        elif c in ("tasks", "task", "comment", "status", "result", "ask", "answer", "later", "link"): cmd_task_write(c, rest)
+        elif c == "state": cmd_state(rest)
+        elif c == "bug": cmd_bug(rest)
+        elif c == "changelog": cmd_changelog(rest)
+        elif c == "hosts": cmd_hosts(rest)
+        elif c == "deploy": cmd_deploy(rest)
+        elif c == "upgrade": cmd_upgrade(rest)
+        elif c == "bug-state": cmd_bug_state(rest)
+        elif c == "now":
+            d = data()
+            print(f"Next: {d['next'] or '-'} | Inbox {d['inbox']} | Stale {d['stale']} | Tasks {d['tasks']}")
+        elif c == "advise": cmd_advise(rest)
+        elif c == "escalate": cmd_escalate(rest)
+        elif c == "advisor": cmd_advisor(rest)
+        elif c == "check": cmd_check()
+        elif c == "handoff": cmd_handoff(rest)
+        elif c == "claim-main": cmd_claim_main(rest)
+        elif c == "agent-add": cmd_agent_add(rest)
+        elif c == "take":
+            print(json.dumps(ht.take_messages(ROOT / CFG["tasks"]["stateDir"], rest[0] if rest else "")))
+        else: print(json.dumps(data()))
+    except (Bad, ht.TaskError) as e:
+        if c == "data":
+            print(json.dumps({"error": short(e)}))
+        else:
+            print("homey: " + short(e), file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        if c == "data":
+            print(json.dumps({"error": "homey failed: " + short(e, 80)}))
+        else:
+            print("homey: failed: " + short(e), file=sys.stderr)
+            sys.exit(1)
+
+main()

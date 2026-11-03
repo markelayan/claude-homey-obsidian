@@ -1,0 +1,76 @@
+filters:
+  and:
+    - type == "project"
+    - '!file.inFolder("System")'
+views:
+  - type: table
+    name: Active
+    filters:
+      and:
+        - status == "active"
+    groupBy:
+      property: file.folder
+      direction: ASC
+    order:
+      - file.name
+      - summary
+      - due
+      - file.mtime
+    columnSize:
+      note.summary: 460
+  - type: table
+    name: Ideas
+    filters:
+      and:
+        - status == "idea"
+    groupBy:
+      property: file.folder
+      direction: ASC
+    order:
+      - file.name
+      - summary
+      - file.ctime
+    columnSize:
+      note.summary: 460
+  - type: table
+    name: Stale
+    filters:
+      and:
+        - status == "active"
+        - file.mtime < now() - "14d"
+    groupBy:
+      property: file.folder
+      direction: ASC
+    order:
+      - file.name
+      - summary
+      - file.mtime
+    columnSize:
+      note.summary: 460
+  - type: table
+    name: Done
+    filters:
+      and:
+        - status == "done"
+    groupBy:
+      property: file.folder
+      direction: ASC
+    order:
+      - file.name
+      - summary
+      - file.mtime
+    columnSize:
+      note.summary: 460
+  - type: kanban
+    name: Board
+    groupBy:
+      property: status
+      direction: ASC
+    groupOrder:
+      - idea
+      - active
+      - paused
+      - done
+    order:
+      - file.name
+      - summary

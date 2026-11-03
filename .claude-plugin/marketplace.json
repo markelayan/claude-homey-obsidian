@@ -1,0 +1,18 @@
+{
+  "name": "claude-homey-obsidian",
+  "owner": {
+    "name": "Mark Elayan"
+  },
+  "plugins": [
+    {
+      "name": "homey",
+      "source": "./plugins/homey",
+      "description": "Long-term memory and agent orchestration for Claude Code, kept in an Obsidian vault",
+      "homepage": "https://github.com/markelayan/claude-homey-obsidian",
+      "category": "productivity"
+    }
+  ],
+  "metadata": {
+    "description": "Homey: long-term memory and agent orchestration for Claude Code"
+  }
+}

@@ -1,0 +1,166 @@
+# Homey - Obsidian Orchestrator
+
+**Long-term memory and a working team for Claude Code, kept in an Obsidian vault you can read.**
+
+You talk to one lead session. It remembers across sessions, hands the work to cheap agents, checks their results, and only comes to you for decisions.
+
+> **Status: early.** One person has run this daily on three projects. Nobody else has installed it yet, and it has no measured token savings. Expect rough edges, and please report them.
+
+## What it solves
+
+| Without it | With Homey |
+|---|---|
+| Claude forgets everything between sessions | Lasting things live in vault notes. Each new session is handed the rules, the status and where to continue |
+| A long session goes stale and has to be re-explained | Every session keeps a run plan that any new session can resume from |
+| One expensive session reads and edits everything | The lead decides. Cheap agents read, edit and write notes. A separate checker reviews the work |
+| You have to watch it all the time | Decisions wait in a pane with their full context. A waiting decision blocks only its own task; other work goes on |
+
+## How it works
+
+```mermaid
+flowchart TD
+    You([You]) -->|goal or decision| Lead[Lead session]
+    Lead -->|exact task note| Tasks[(Task notes in the vault)]
+    Tasks -->|watcher wakes the owner| Workers[Worker agents<br/>read, edit, write notes]
+    Workers -->|result in the note| Tasks
+    Tasks -->|watcher tells the lead| Lead
+    Lead -->|check the work| Checker[New checker agent]
+    Checker -->|confirmed or refuted| Lead
+    Lead -->|only what is yours to decide| Pane[Pane in the app]
+    Pane -->|your answer| Lead
+    Lead -->|status, plan, next step| Vault[(Vault notes)]
+    Vault -->|handed over at every start| Lead
+```
+
+A task, start to finish:
+
+1. You give the lead a goal. It designs the work.
+2. It writes one task note with the exact change, the files, and what to look at when done.
+3. The watcher wakes the agent that owns the task. The agent does it and writes the result in the note.
+4. The watcher tells the lead. It checks the result, with a new `verifier` when that matters, then closes the task or sends it back.
+5. Only decisions reach you: a goal or scope change, spending money, deleting data, or work on services you marked as protected.
+
+Agents work from task notes and do not chat with each other, so everything they did stays readable in the vault.
+
+## The team
+
+| Role | Default model | Job |
+|---|---|---|
+| `lead` | Opus | Your main session. Designs, writes exact tasks, decides from results |
+| `scout` | Haiku | Reads across files and returns evidence |
+| `researcher` | Haiku | Reads the web and docs, official sources first |
+| `coder` | Haiku | Makes the exact edits a task names and commits them. It does not design |
+| `ops` | Haiku | Reports host state from fixed checks and runs deploy steps exactly as written |
+| `docs` | Haiku | Updates notes after a change |
+| `capturer` | Haiku | Saves ideas, decisions, facts, bugs and questions for you |
+| `illustrator` | Haiku | Makes mind maps and canvases |
+| `librarian` | Haiku | Reports on vault health: links, orphans, stale projects |
+| `keeper` | Haiku | Reports on Claude Code changes, settings and token use |
+| `verifier` | Sonnet | Independent check, new each time |
+| `skillsmith` | Sonnet | Writes and tests new skills |
+| `advisor` | Opus | Optional second opinion on a hard question |
+
+You choose which agents to start and which models they use during setup.
+
+## What you need
+
+| Need | Notes |
+|---|---|
+| macOS | The watcher uses launchd. Linux and Windows are untested |
+| Claude Code desktop app | For the pane and for starting agents as visible sessions. The terminal works for the rest, without the pane |
+| A Claude plan or API credit | Agents and the watcher spend it |
+| Obsidian 1.14 or later | With its command line turned on. It holds the memory, so it is required |
+| Python 3 and `rsync` | Both come with most Macs; Python may need the Xcode tools |
+
+## Install
+
+1. Install Obsidian and turn on its command line in its settings.
+2. Get this repository, then copy the kit into the folder you want to use. This also installs the plugin for that folder only:
+
+   ```bash
+   git clone https://github.com/markelayan/claude-homey-obsidian
+   sh claude-homey-obsidian/copy-kit.sh ~/path/to/your-folder
+   ```
+
+3. Open Claude Code in that folder and send:
+
+   ```
+   Read .claude/homey-plugin/BOOTSTRAP.md and follow it.
+   ```
+
+4. The agent interviews you (your name, areas, which agents, the watcher, bypass), builds the vault, starts the agents and runs a short demo.
+
+> Starting agents as sessions works from a message typed in the desktop app, not over Remote Control. Setup falls back to background agents you will not see in the sidebar.
+
+## Daily use
+
+Open a session in the folder and talk. It picks up where the last one stopped, without being asked.
+
+| You want to | Do this |
+|---|---|
+| Give work | Tell the lead. It writes the tasks |
+| See where things stand | `/homey` opens the pane: **Now**, **Projects**, **Decisions**, **Bugs** |
+| Answer a question | Press an option in the pane. **Open note** shows the full context |
+| Save an idea without breaking the flow | `.cap <text>` |
+| Report a bug | `.bug <text>` |
+| Review the inbox and stale projects | `.review` |
+| Get less text, or the reason, or the proof | `.short`, `.why`, `.prove` |
+| Stop everything | `.stop` |
+| Make it ask first, or stop asking | `.ask`, `.go` |
+| Lift a guard for one turn | Start your message with `.ok` |
+| Start fresh when a session gets long | **Hand off to new session** in the pane, then send the prompt it gives you |
+| Pick up plugin changes | `/reload-plugins`, or a new session |
+
+## Warnings
+
+- **The guards are a seatbelt, not a sandbox.** Most rules only remind. Hard blocks catch risky commands by pattern, and a clever command can get past a pattern. Keep backups and do not rely on them for safety.
+- **Bypass is your choice.** By default agents can read and use task commands only. Turning on bypass lets them run without prompts, so understand that before you switch it on.
+- **It spends while you are away.** The watcher wakes agents for new tasks and comments. Limits are in `.claude/homey.json` under `tasks`: `nudgesPerTask`, `nudgesPerDay`, `maxRuns`.
+- **Cheap agents make mistakes.** Haiku workers follow instructions and do not design. Have the lead write exact tasks and check the results.
+- **Secrets:** vault notes are plain files. Do not put secrets in them, and check what you commit.
+- **Real money or production:** list protected services in `orderPath` and add your own rules. Homey asks before those steps, but it is not a safety system for them.
+- **The pane is an early-access feature.** It is a Claude Code function hook (a mod), which is off by default for some users and may change between releases. It ran here on 2.1.309 to 2.1.317. Whether the rest of Homey works without it has not been tested.
+- **Known Claude Code bug:** the desktop app can drop a project `.mcp.json` server from a running session ([#106820](https://github.com/anthropics/claude-code/issues/106820)). Worker agents reconnect on each run, so hand that work to one.
+
+## What it changes on your machine
+
+| Where | What |
+|---|---|
+| Your folder | Vault notes, `.claude/homey.json`, `.claude/agents/`, `.claude/homey-plugin/`, project settings |
+| `~/Library/LaunchAgents` | One watcher job per folder, if you turn the watcher on |
+| Claude Code plugin registry | One marketplace and plugin entry per folder |
+
+Homey has no server of its own. Your prompts and files go only where Claude Code already sends them.
+
+## Remove it
+
+```bash
+python3 .claude/homey-plugin/plugins/homey/scripts/homey_watch_install.py uninstall
+```
+
+Then run `claude plugin list` in the folder, and `claude plugin uninstall` for its `homey@...` entry with `--scope project`. Your notes stay: they are ordinary Markdown files.
+
+## When something goes wrong
+
+| Problem | Try |
+|---|---|
+| Not sure Obsidian is ready | `python3 .claude/homey-plugin/plugins/homey/bin/homey check` |
+| Agents do not wake | `python3 .claude/homey-plugin/plugins/homey/scripts/homey_watch_install.py status`, then read `.claude/homey-watch/watch.log` |
+| No pane | `/reload-plugins`, then `/homey`. The pane uses an early-access feature of Claude Code, so it may not load on your build |
+| Changes do not show | `/reload-plugins`, or a new session |
+
+Found a bug? [Open an issue](https://github.com/markelayan/claude-homey-obsidian/issues).
+
+## Layout
+
+| Path | What |
+|---|---|
+| `copy-kit.sh`, `bootstrap.sh`, `BOOTSTRAP.md` | Setup |
+| `plugins/homey/skills/` | One skill per flow, plus Obsidian skills by kepano |
+| `plugins/homey/hooks/`, `plugins/homey/scripts/` | Hooks, watcher, pane |
+| `plugins/homey/bin/homey` | The command line agents use |
+| `plugins/homey/setup/` | Default config, agent definitions, vault template |
+
+## License
+
+MIT. See `LICENSE` and `NOTICE`.

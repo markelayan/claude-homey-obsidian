@@ -1,0 +1,5 @@
+Homey includes third-party work:
+
+- The skills obsidian-cli, obsidian-markdown, obsidian-bases and json-canvas in plugins/homey/skills/ are from
+  obsidian-skills by Steph Ango (kepano), MIT License. Its license text is in
+  plugins/homey/skills/LICENSE-kepano-obsidian-skills.

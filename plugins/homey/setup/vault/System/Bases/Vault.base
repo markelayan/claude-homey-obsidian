@@ -1,0 +1,64 @@
+filters:
+  and:
+    - '!file.inFolder("System")'
+    - '!file.inFolder("ops")'
+views:
+  - type: table
+    name: Inbox
+    filters:
+      and:
+        - file.inFolder("Inbox")
+    order:
+      - file.name
+      - file.ctime
+    sort:
+      - property: file.ctime
+        direction: ASC
+  - type: table
+    name: Resources
+    filters:
+      and:
+        - type == "resource"
+    order:
+      - file.name
+      - summary
+      - file.mtime
+    groupBy:
+      property: file.folder
+      direction: ASC
+    columnSize:
+      note.summary: 460
+  - type: table
+    name: Daily
+    filters:
+      and:
+        - type == "daily"
+    order:
+      - file.name
+      - file.mtime
+    sort:
+      - property: file.name
+        direction: DESC
+    limit: 7
+  - type: table
+    name: Domains
+    filters:
+      or:
+        - file.inFolder("Work")
+        - file.inFolder("Code")
+        - file.inFolder("Research")
+        - file.inFolder("Content")
+    order:
+      - file.name
+      - summary
+      - type
+      - status
+      - file.mtime
+    sort:
+      - property: file.mtime
+        direction: DESC
+    groupBy:
+      property: file.folder
+      direction: ASC
+    columnSize:
+      note.summary: 460

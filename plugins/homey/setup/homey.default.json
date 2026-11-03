@@ -1,0 +1,486 @@
+{
+  "user": {
+    "name": "",
+    "id": ""
+  },
+  "requires": {
+    "obsidian": "1.14"
+  },
+  "vault": ".",
+  "dailyDir": "Daily",
+  "inboxDir": "Inbox",
+  "domains": [
+    "Homey",
+    "Work",
+    "Code",
+    "Research",
+    "Content",
+    "Inbox",
+    "Tasks"
+  ],
+  "skipDirs": [
+    ".obsidian",
+    ".trash",
+    "System",
+    "node_modules"
+  ],
+  "types": {
+    "project": "project",
+    "decision": "decision"
+  },
+  "nextPattern": "^- Next:\\s*(.*)$",
+  "dailyGlob": "????-??-??.md",
+  "staleDays": 14,
+  "statuses": [
+    "idea",
+    "active",
+    "paused",
+    "done"
+  ],
+  "limits": {
+    "findLines": 15,
+    "getLines": 200,
+    "getChars": 8000,
+    "rowChars": 160,
+    "decisions": 8,
+    "dataRows": 60,
+    "noteBytes": 1000000
+  },
+  "band": [
+    "next",
+    "inbox",
+    "stale",
+    "tasks"
+  ],
+  "panes": [
+    {
+      "id": "tasks",
+      "title": "Now",
+      "type": "tasks"
+    },
+    {
+      "id": "board",
+      "title": "Projects",
+      "type": "board"
+    },
+    {
+      "id": "decisions",
+      "title": "Decisions",
+      "type": "decisions"
+    },
+    {
+      "id": "bugs",
+      "title": "Bugs",
+      "type": "table",
+      "file": "Homey/Bugs.md",
+      "heading": "Open",
+      "style": "rows",
+      "also": "Closed"
+    }
+  ],
+  "hooks": {
+    "checks": [
+      "resume",
+      "style",
+      "words",
+      "capture",
+      "ctx",
+      "checkpoint",
+      "logcheck",
+      "projectCheck",
+      "summaryCheck",
+      "screenshotCheck",
+      "canvas",
+      "dangerGuard",
+      "homeGuard",
+      "scopeGuard",
+      "skillCheck",
+      "noteCheck",
+      "agentGuard",
+      "logTimeCheck",
+      "roleGuard",
+      "pluginLock",
+      "statusCheck",
+      "planCheck",
+      "paneQuestions",
+      "commitLink",
+      "taskScope",
+      "noTestRuns",
+      "bug",
+      "approvalGuard"
+    ],
+    "style": "Reply to {user} briefly. Put detail in a vault note and link it. Use the vault flows: each has a `homey-*` skill.",
+    "words": {
+      "short": "Reply in 3 lines at most.",
+      "why": "Give the reason for your last choice in 2 lines. Change nothing.",
+      "prove": "Show the real command output behind your last claim. If you have none, say it is unverified.",
+      "stop": "Halt all work and use no tools. State in 2 lines where things stand.",
+      "ask": "Ask one direct question before acting.",
+      "go": "Stop asking. Do it, then report.",
+      "save": "Now append to the daily log and end it with a `- Next:` bullet.",
+      "ok": "{user} approved breaking a Homey guard for this turn. Say which guard you broke.",
+      "review": "Run a review of Inbox/, stale projects and open tasks. Show one table: item, where it should go. Move items after the user's answer."
+    },
+    "askFirst": [
+      "(^|[\\s;&|(])(rm|rmdir|unlink|shred)\\s",
+      "\\bfind\\b.*\\s-delete\\b",
+      "\\bgit\\s+(reset\\s+--hard|clean)\\b",
+      "\\bdocker[\\s-]compose\\b.*\\bup\\b",
+      "\\bdocker\\s+(rm|rmi|volume\\s+rm|system\\s+prune)\\b",
+      "\\b(order_send|place_order|close_position|modify_position|cancel_order)\\b",
+      "(?i)\\b(drop\\s+(table|database)|delete\\s+from|truncate|vacuum|purge)\\b"
+    ],
+    "tradeToolPattern": "(?i)(send|place|close|modify|cancel).*(order|position|trade)|(order|position|trade).*(send|place|close|modify|cancel)",
+    "homeFile": "Home.md",
+    "homeWritePattern": "(sed\\s+-i|>|\\btee\\b|\\b(mv|cp)\\b)[^\\n;|&]*{home}|open\\([^\\n)]*{home}[^\\n)]*['\\\"][wa]|obsidian\\b[^\\n;|&]*\\b(append|prepend|create|move|delete|property:set)\\b[^\\n;|&]*\\b(file|path|name|to)=[\\\"']?{stem}(\\.md)?[\\\"']?(\\s|$)",
+    "editTools": [
+      "Write",
+      "Edit",
+      "NotebookEdit"
+    ],
+    "noteSkills": {
+      ".md": "obsidian-markdown",
+      ".canvas": "json-canvas",
+      ".base": "obsidian-bases"
+    },
+    "cliSkill": "obsidian-cli",
+    "outsideOk": [
+      "/tmp/",
+      "/private/tmp/"
+    ],
+    "projectDomains": [
+      "Work",
+      "Code",
+      "Research",
+      "Content"
+    ],
+    "summaryDomains": [
+      "Work",
+      "Code",
+      "Research",
+      "Content",
+      "Homey"
+    ],
+    "hooksSkipDirs": [
+      "System"
+    ],
+    "templatesDir": "System",
+    "rulesFile": "Homey/Homey Rules.md",
+    "dailyTemplate": "System/Templates/Template - daily.md",
+    "nextPrefix": "- Next:",
+    "obsidianVault": "",
+    "activeStatus": "active",
+    "limits": {
+      "replyWords": 90,
+      "tableAfterWords": 40,
+      "maxQuestions": 1,
+      "transcriptBytes": 2000000,
+      "headBytes": 400,
+      "projectHeadChars": 200,
+      "changedNames": 5,
+      "statusChars": 4000,
+      "planStaleMinutes": 60,
+      "planNudgeMinutes": 20,
+      "planFirstTools": 3,
+      "planWorkerTools": 10
+    },
+    "startSkill": "homey:homey-operate",
+    "agentOk": [
+      "verifier"
+    ],
+    "cliNoSkill": [
+      "daily:append"
+    ],
+    "statusFile": "Homey/Status.md"
+  },
+  "tasks": {
+    "dir": "Tasks",
+    "statuses": [
+      "todo",
+      "doing",
+      "blocked",
+      "review",
+      "done"
+    ],
+    "owners": {},
+    "people": [
+      "homey",
+      "watcher"
+    ],
+    "homeySession": "",
+    "nudgesPerDay": 500,
+    "nudgesPerTask": 5,
+    "holdMinutes": 0,
+    "maxRuns": 2,
+    "tickSeconds": 10,
+    "runTimeoutSeconds": 3600,
+    "stallMinutes": 10,
+    "stallStopMinutes": 30,
+    "stallRestarts": 1,
+    "stallDenials": 3,
+    "claudeBin": "~/.local/bin/claude",
+    "stateDir": ".claude/homey-watch",
+    "prompt": "HOMEY-WORKER. Task note: {path} . Nudged because: {reason}. You are {owner}. Read the note: Brief is the work, Comments are steering, newest last. Comments may also reach you while you work. Use only these commands to update it, through Bash: `python3 {homey} status \"{path}\" doing` when you start; `python3 {homey} comment \"{path}\" {owner} \"text\"` for progress or questions; `python3 {homey} result \"{path}\" \"text\"` for the result. End with `python3 {homey} status \"{path}\" review`, or `blocked` plus a comment saying what you need. Do not message other sessions. Your reply is not read: the note is the only report.",
+    "appLink": "claude://claude.ai/epitaxy/{id}",
+    "mainRole": "lead"
+  },
+  "roles": {
+    "capturer": {
+      "edit": "vault",
+      "bash": [
+        "homey",
+        "obsidian"
+      ],
+      "rules": "You save ideas, to-dos, decisions, facts and sources into vault notes, and report only in your task note."
+    },
+    "illustrator": {
+      "edit": "vault",
+      "bash": [
+        "homey",
+        "obsidian"
+      ],
+      "rules": "You make mind maps and canvases in the vault, and report only in your task note."
+    },
+    "scout": {
+      "edit": "none",
+      "bash": [
+        "homey"
+      ],
+      "rules": "You do read-only file and vault lookups and return tagged evidence, and report only in your task note."
+    },
+    "researcher": {
+      "edit": "none",
+      "bash": [
+        "homey"
+      ],
+      "rules": "You do read-only web and documentation checks from official sources first, and report only in your task note."
+    },
+    "librarian": {
+      "edit": "none",
+      "bash": "any",
+      "rules": "You check the vault for summaries, links, orphans and stale items without moving anything, and report only in your task note."
+    },
+    "keeper": {
+      "edit": "none",
+      "bash": "any",
+      "rules": "You check the harness (changelog, settings drift, hooks, skills, token use) and change nothing, and report only in your task note."
+    },
+    "advisor": {
+      "edit": "none",
+      "bash": "any",
+      "rules": "You advise Homey on a question and change nothing, and report only in your task note."
+    },
+    "skillsmith": {
+      "edit": "vault-all",
+      "bash": "any",
+      "rules": "You create and fix skills and workflows and record how they behave, and report only in your task note."
+    },
+    "verifier": {
+      "edit": "none",
+      "bash": [
+        "homey",
+        "obsidian",
+        "git",
+        "gh",
+        "grep",
+        "rg",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "find",
+        "jq"
+      ],
+      "rules": "You independently re-check a claim or artifact against its requirement, read-only, and report only in your task note.",
+      "bashSub": {
+        "git": [
+          "status",
+          "log",
+          "diff",
+          "show",
+          "rev-parse",
+          "ls-files",
+          "remote",
+          "blame",
+          "branch",
+          "fetch"
+        ],
+        "gh": [
+          "pr",
+          "issue",
+          "run",
+          "repo",
+          "workflow",
+          "api"
+        ]
+      }
+    },
+    "lead": {
+      "edit": "vault",
+      "bash": [
+        "homey",
+        "obsidian",
+        "git",
+        "gh",
+        "grep",
+        "rg",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "find",
+        "jq",
+        "cd",
+        "date",
+        "cut",
+        "sort",
+        "uniq",
+        "printf"
+      ],
+      "agents": [
+        "verifier",
+        "scout",
+        "researcher"
+      ],
+      "mcp": [
+        "mcp__ccd_"
+      ],
+      "rules": "You are the lead: you decide, workers do. Reads across files go to scout, code edits to coder, host state to ops, notes to docs or capturer, checks to verifier. Do a piece yourself only when no worker fits or a worker failed, and say why in Status. Do not ask the user how to proceed: ask only through homey-wait and only for decisions that are theirs (a decision blocks only its own task; go on with the next), and report in vault notes. The user never gets a job: a command, a check or a next stage of the plan is yours to do.",
+      "commitLink": true,
+      "bashSub": {
+        "git": [
+          "status",
+          "log",
+          "diff",
+          "show",
+          "rev-parse",
+          "ls-files",
+          "remote",
+          "blame",
+          "branch",
+          "fetch"
+        ],
+        "gh": [
+          "pr",
+          "issue",
+          "run",
+          "repo",
+          "workflow",
+          "api"
+        ]
+      },
+      "editDeny": [
+        "Tasks/"
+      ],
+      "handOff": "Hand it to a worker: `homey task scout|coder|ops|docs \"<title>\" \"<brief>\"`. Go on yourself only if no worker fits."
+    },
+    "coder": {
+      "edit": "project",
+      "bash": "any",
+      "denyBash": [
+        "--no-verify",
+        "\\bgit\\s+push\\b[^;&|]*(--force\\b|--force-with-lease|\\s-[A-Za-z]*f)"
+      ],
+      "rules": "You are the coder: you make exactly the edits in your task, commit with a `Task: <task note name>` line, link the commit, make no design or scope decisions, and report in your task note.",
+      "commitLink": true,
+      "editDeny": [
+        "Tasks/"
+      ],
+      "taskScope": true,
+      "noFileWrites": true,
+      "denyHomey": [
+        "task"
+      ]
+    },
+    "docs": {
+      "edit": "vault",
+      "bash": [
+        "homey",
+        "git",
+        "grep",
+        "rg",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "find"
+      ],
+      "bashSub": {
+        "git": [
+          "status",
+          "log",
+          "diff",
+          "show",
+          "rev-parse",
+          "ls-files",
+          "remote",
+          "blame",
+          "branch",
+          "fetch"
+        ],
+        "gh": [
+          "pr",
+          "issue",
+          "run",
+          "repo",
+          "workflow",
+          "api"
+        ]
+      },
+      "editDeny": [
+        "Tasks/"
+      ],
+      "rules": "You are docs: you update only the notes your task names so they match the code, add one plain changelog line, link the code task, and report in your task note."
+    },
+    "ops": {
+      "edit": "none",
+      "bash": [
+        "homey"
+      ],
+      "rules": "You are ops: you state only what `homey hosts` shows, with its read time, run a deploy only with `homey deploy <task> --go <note>`, change nothing else, and report in your task note.",
+      "denyHomey": [
+        "task"
+      ]
+    }
+  },
+  "writeGitGh": [
+    "\\bgit\\s+(commit|push|merge|rebase|reset|checkout|switch|add|rm|stash|clean|tag)\\b",
+    "\\bgh\\s+.*\\b(create|edit|close|delete|merge|comment)\\b",
+    "\\bsed\\s+(-[A-Za-z]*i|--in-place)"
+  ],
+  "noTest": [
+    "pytest",
+    "python -m pytest",
+    "python3 -m pytest",
+    "python -m unittest",
+    "python3 -m unittest",
+    "vitest",
+    "jest",
+    "mocha",
+    "playwright test",
+    "npm test",
+    "npm run test",
+    "pnpm test",
+    "yarn test",
+    "go test",
+    "cargo test",
+    "claude plugin test",
+    "gh workflow run"
+  ],
+  "bugsFile": "Homey/Bugs.md",
+  "changelogFile": "Homey/Changelog.md",
+  "systemStateFile": "Homey/System state.md",
+  "hosts": [],
+  "orderPath": [],
+  "steerOnly": [
+    "roleGuard",
+    "taskScope",
+    "commitLink",
+    "noTestRuns",
+    "paneQuestions",
+    "pluginLock"
+  ]
+}

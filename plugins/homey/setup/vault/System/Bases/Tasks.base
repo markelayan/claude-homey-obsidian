@@ -1,0 +1,73 @@
+filters:
+  and:
+    - type == "task"
+    - '!file.inFolder("System")'
+views:
+  - type: kanban
+    name: Board
+    groupBy:
+      property: status
+      direction: ASC
+    groupOrder:
+      - todo
+      - doing
+      - blocked
+      - review
+      - done
+    order:
+      - file.name
+      - owner
+      - summary
+      - commit
+  - type: table
+    name: Agents
+    filters:
+      and:
+        - status != "done"
+    groupBy:
+      property: owner
+      direction: ASC
+    order:
+      - file.name
+      - status
+      - summary
+      - file.mtime
+      - kind
+      - commit
+      - pr
+      - issue
+      - branch
+      - docs
+    columnSize:
+      note.summary: 360
+  - type: table
+    name: Current
+    filters:
+      and:
+        - status == "doing"
+    order:
+      - owner
+      - file.name
+      - summary
+      - file.mtime
+      - kind
+      - commit
+      - pr
+      - issue
+      - branch
+      - docs
+  - type: table
+    name: Closed
+    filters:
+      and:
+        - status == "done"
+    order:
+      - file.name
+      - owner
+      - kind
+      - commit
+      - pr
+      - issue
+      - branch
+      - docs
+      - summary
