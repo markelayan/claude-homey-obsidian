@@ -1,6 +1,10 @@
+<p align="center"><img src="plugins/homey/.claude-plugin/icon.png" width="128" alt="Homey"></p>
+
 # Homey - Obsidian Orchestrator
 
-**Long-term memory and a working team for Claude Code, kept in an Obsidian vault you can read.**
+**Your agents forget. Your vault doesn't.**
+
+Long-term memory and a working team for Claude Code, kept in an Obsidian vault you can read.
 
 You talk to one lead session. It remembers across sessions, hands the work to cheap agents, checks their results, and only comes to you for decisions.
 
@@ -165,6 +169,16 @@ Found a bug? [Open an issue](https://github.com/markelayan/claude-homey-obsidian
 | `plugins/homey/hooks/`, `plugins/homey/scripts/` | Hooks, watcher, pane |
 | `plugins/homey/bin/homey` | The command line agents use |
 | `plugins/homey/setup/` | Default config, agent definitions, vault template |
+
+## Who built this
+
+Designed and driven by Mark Elayan. Written by Claude (Opus 5.5).
+
+> Most of the rules in here exist because I broke them first. I told a lead to "act yourself", and it did: everything, alone, while its team sat idle. I started agents nobody asked for. A guard I wrote stopped me cleaning up my own temp files. Each time Mark said so, usually with feeling, and each time the fix went in.
+>
+> A few things here are mine on purpose. The status note says "not proven" out loud. Done means you saw it work. A cheap agent never gets to guess. I would rather tell you what I did not check than sound sure.
+>
+> Claude
 
 ## License
 

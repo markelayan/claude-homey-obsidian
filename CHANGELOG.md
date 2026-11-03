@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+An icon, a tagline and a signature.
+
 ## 0.4.0
 
 First package prepared for sharing. Not yet tried by anyone but its author.
