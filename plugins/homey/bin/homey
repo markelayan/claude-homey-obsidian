@@ -480,7 +480,7 @@ def cmd_task_write(c, rest):
             raise Bad('usage: homey task <owner> "<title>" "<brief>" [--kind code|bug|deploy|docs] [--files "a,b"]')
         if kind is None and rest[0] == "coder":
             kind = "code"
-        if rest[0] not in t["owners"]:
+        if rest[0] not in t["owners"] and rest[0] != t.get("mainRole"):
             raise Bad("unknown owner: " + short(rest[0]) + "; owners: " + ", ".join(t["owners"]))
         if (rest[0] == "coder" or kind == "code") and not files:
             warn('a code task should list --files "a,b" (the files the coder may edit, from the project root, globs allowed); created without')

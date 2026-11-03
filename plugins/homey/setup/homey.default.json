@@ -220,7 +220,7 @@
     "stallDenials": 3,
     "claudeBin": "~/.local/bin/claude",
     "stateDir": ".claude/homey-watch",
-    "prompt": "HOMEY-WORKER. Task note: {path} . Nudged because: {reason}. You are {owner}. Read the note: Brief is the work, Comments are steering, newest last. Comments may also reach you while you work. Use only these commands to update it, through Bash: `python3 {homey} status \"{path}\" doing` when you start; `python3 {homey} comment \"{path}\" {owner} \"text\"` for progress or questions; `python3 {homey} result \"{path}\" \"text\"` for the result. End with `python3 {homey} status \"{path}\" review`, or `blocked` plus a comment saying what you need. Do not message other sessions. Your reply is not read: the note is the only report.",
+    "prompt": "HOMEY-WORKER. Task note: {path} . Nudged because: {reason}. You are {owner}. Read the note: Brief is the work, Comments are steering, newest last. Comments may also reach you while you work. Use only these commands to update it, through Bash: `python3 {homey} status \"{path}\" doing` when you start; `python3 {homey} comment \"{path}\" {owner} \"text\"` for progress or questions; `python3 {homey} result \"{path}\" \"text\"` for the result. End with `python3 {homey} status \"{path}\" review`, or `blocked` plus a comment saying what you need. Do not message other sessions. Your reply is not read: the note is the only report. Tools can change between runs: run the first command and judge by its result, never by what an earlier run in this session said.",
     "appLink": "claude://claude.ai/epitaxy/{id}",
     "mainRole": "lead"
   },

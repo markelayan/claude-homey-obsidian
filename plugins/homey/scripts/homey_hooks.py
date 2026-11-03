@@ -450,12 +450,19 @@ def domains_without_project():
     return missing
 
 
+def note_head(path):
+    """The whole frontmatter, however long, else the first headBytes."""
+    text = path.read_text("utf-8", "ignore")
+    end = text.find("\n---", 3) if text.startswith("---") else -1
+    return text[:end] if end > 0 else text[:LIM["headBytes"]]
+
+
 def notes_without_summary(changed):
     found = []
     domains = tuple(H["summaryDomains"])
     for path in changed:
         if path.suffix == ".md" and path.parts[len(VAULT.parts)] in domains:
-            head = path.read_text("utf-8", "ignore")[:LIM["headBytes"]]
+            head = note_head(path)
             if head.startswith("---") and "\ntype: " in head and "type: daily" not in head and "summary:" not in head:
                 found.append(path.name)
     return found
@@ -468,7 +475,7 @@ def badly_placed_notes(changed):
     for path in changed:
         if path.suffix != ".md" or path.parts[len(VAULT.parts)] not in domains:
             continue
-        head = path.read_text("utf-8", "ignore")[:LIM["headBytes"]]
+        head = note_head(path)
         if re.match(r"\d{4}-\d{2}-\d{2}", path.stem):
             found.append(f"{path.name} has a date in its name")
         elif not re.search(r"^up:\s*.*\[\[", head, re.M):

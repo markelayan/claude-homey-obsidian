@@ -57,7 +57,7 @@ def decide(tasks, state, live, today, cfg, seen_of, now):
             continue
         path, owner, status = t["path"], t["owner"], t["status"]
         st = task_state(state, path)
-        if not owner or owner in cfg["people"]:
+        if not owner or owner in cfg["people"] or owner == cfg.get("mainRole"):
             continue
         if owner not in cfg["owners"] or status not in ACTIVE + ("done",):
             if not st["note"].get("skip"):
@@ -137,7 +137,7 @@ def finished_now(tasks, state, cfg):
     """Agent tasks that reached review or blocked since the last pass. Each gives Homey one notice."""
     out = []
     for t in tasks:
-        if t.get("bad") or not t["owner"] or t["owner"] in cfg["people"]:
+        if t.get("bad") or not t["owner"] or t["owner"] in cfg["people"] or t["owner"] == cfg.get("mainRole"):
             continue
         if t["status"] in ("review", "blocked") and task_state(state, t["path"])["last"] not in ("", t["status"]):
             out.append(t)

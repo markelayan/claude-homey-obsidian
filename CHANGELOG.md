@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- Workers run the first command and judge by its result. Before this, a worker told by its own session history that it had no Bash kept refusing tasks, even with Bash back.
+- `homey task` accepts the main role as owner, and the watcher leaves those notes alone.
+- The note checks read the whole frontmatter, so tags or a summary past the first 400 bytes are no longer reported missing.
+
 ## 0.4.1
 
 An icon, a tagline and a signature.
