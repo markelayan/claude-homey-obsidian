@@ -208,6 +208,8 @@ def status_text():
 def resume(data):
     if not on("resume"):
         return
+    if "/plugins/cache/" in str(Path(__file__).resolve()):
+        subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "homey_watch_install.py"), "refresh"], capture_output=True, timeout=15, env=dict(os.environ, HOMEY_CONFIG=str(CONFIG_FILE)))
     if not subprocess.run(["pgrep", "-x", "Obsidian"], capture_output=True).stdout:
         subprocess.run(["open", "-g", f"obsidian://open?vault={H['obsidianVault']}"], capture_output=True)
     role = role_of(data)
@@ -988,7 +990,8 @@ def role_problem(role, tool, tool_input):
 
 
 def kit_is_copy():
-    return not (Path(__file__).resolve().parents[3] / "copy-kit.sh").is_file()
+    kit = Path(__file__).resolve().parents[3]
+    return kit.name == "homey-plugin" and not (kit / "copy-kit.sh").is_file()
 
 
 def lock_problem(tool, tool_input):
@@ -1317,7 +1320,7 @@ if __name__ == "__main__":
         setup()
     except NotSetUp:
         if sys.argv[1:] == ["resume"]:
-            emit("SessionStart", "Homey is installed but this folder is not set up. Read .claude/homey-plugin/BOOTSTRAP.md if it exists, otherwise load skill homey:homey-setup.")
+            emit("SessionStart", "Homey is installed but this folder is not set up. If the user asks to set it up, load skill homey:homey-setup.")
         sys.exit(0)
     except Bad as e:
         line = f"Homey hooks: {e}"

@@ -1,11 +1,10 @@
 # Files that matter
 
-Paths are from the vault root. Plugin root = `.claude/homey-plugin/plugins/homey` (called `<plugin>`).
+Paths are from the vault root. Plugin root = the installed plugin, `${CLAUDE_PLUGIN_ROOT}` (called `<plugin>`).
 
 ## Plugin
 | Path | Job |
 |---|---|
-| `.claude/homey-plugin/.claude-plugin/marketplace.json` | Local directory marketplace `homey-local` |
 | `<plugin>/.claude-plugin/plugin.json` | Plugin `homey`, version 0.2.0 |
 | `<plugin>/bin/homey` | The CLI: vault reads and task writes (`commands.md`). On PATH only in Claude's Bash tool while the plugin is enabled |
 | `<plugin>/scripts/homey_tasks.py` | Task note read and write code shared by the CLI, watcher and steer hook |
@@ -16,7 +15,6 @@ Paths are from the vault root. Plugin root = `.claude/homey-plugin/plugins/homey
 | `<plugin>/hooks/hooks.json` | Registers the mod (`./register.js`) and the command hooks |
 | `<plugin>/hooks/register.js` | The mod: band, pane, `/homey` command, message taking (`pane.md`) |
 | `<plugin>/skills/` | All `homey-*` skills and the four Obsidian skills (`homey:` prefix; bare names still resolve) |
-| `.claude/homey-plugin/NOTES.md` | Build notes and glitches for the plugin |
 
 ## Hooks registered in `hooks.json`
 | Event | Matcher | Command | Timeout |
@@ -63,7 +61,7 @@ Paths are from the vault root. Plugin root = `.claude/homey-plugin/plugins/homey
 ## Watcher on and off
 | Want | Command (from the vault) |
 |---|---|
-| See it | `python3 .claude/homey-plugin/plugins/homey/scripts/homey_watch_install.py status` (`active pid N` or `not running`) |
+| See it | `homey watcher status` (`active pid N` or `not running`) |
 | Turn on, or restart after changing `vault`, `dir` or `stateDir`; other `tasks` edits apply on the next pass | `... homey_watch_install.py install` |
 | Turn off | `... homey_watch_install.py uninstall` |
 | One pass by hand | `HOMEY_CONFIG=<config> python3 .../homey_watch.py tick` |
@@ -86,9 +84,6 @@ Each folder has its own launchd job, label `com.homey.watch.<folder>-<hash>`, fi
 
 | Path | Job |
 |---|---|
-| `.claude/homey-plugin/copy-kit.sh` | Copies the files into a new folder; the only step Homey runs |
-| `.claude/homey-plugin/BOOTSTRAP.md` | What that folder's agent follows |
-| `.claude/homey-plugin/bootstrap.sh` | Run by that agent: installs the plugin, then runs setup |
 | `scripts/homey_setup.py` | Makes the vault; never overwrites |
 | `setup/homey.default.json` | Default settings, no personal values |
 | `setup/vault/` | Obsidian templates, Bases, index, starter notes |

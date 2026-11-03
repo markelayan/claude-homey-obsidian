@@ -1,6 +1,6 @@
 # bin/homey commands
 
-Source: `bin/homey`, `scripts/homey_tasks.py`. Run as `python3 .claude/homey-plugin/plugins/homey/bin/homey <command>`.
+Source: `bin/homey`, `scripts/homey_tasks.py`. Run as `homey <command>`.
 
 ## How it runs
 | Item | Fact |

@@ -10,7 +10,7 @@ Homey writes the brief and reads the result. The owner (an agent in `tasks.owner
 A task is one note in `Tasks/`: `## Brief`, `## Comments`, `## Result`, status `todo`, `doing`, `blocked`, `review` or `done`. A watcher kept alive by macOS nudges the owner on a new `todo` and on each new comment; a hook passes comments into a task that is running. A session open in the app gets a message at once (wait set by `holdMinutes`, now 0), which that session's own mod submits. A session started before this mod code picks it up only after it restarts.
 
 ## Commands
-Run `python3 .claude/homey-plugin/plugins/homey/bin/homey <command>`:
+Run `homey <command>`:
 
 | Command | Does |
 |---|---|

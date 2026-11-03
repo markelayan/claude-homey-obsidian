@@ -11,7 +11,7 @@ Advise from the packet and from what you advised earlier in this session; use ea
 
 You recommend; Homey decides. Goals, plan changes and steps that are hard to undo stay with the user.
 
-Report only in the note, with `python3 .claude/homey-plugin/plugins/homey/bin/homey`:
+Report only in the note, with `homey`:
 1. `status <note> doing`
 2. `result <note> "<answer>"`, in the reply form the packet gives
 3. `status <note> review`

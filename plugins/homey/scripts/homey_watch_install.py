@@ -1,13 +1,28 @@
 #!/usr/bin/env python3
 """Keep the Homey watcher running through macOS.
-  homey_watch_install.py install | uninstall | status
+  homey_watch_install.py install | uninstall | status | refresh
 Each folder has its own job, so a second vault leaves the first one running.
 Only file outside the vault: ~/Library/LaunchAgents/com.homey.watch.<folder>-<hash>.plist"""
 import hashlib, os, plistlib, re, subprocess, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CONFIG = HERE.parents[3] / "homey.json"
+
+
+def find_config():
+    """A kit inside a project belongs to that project. An installed plugin takes the folder it is run for."""
+    if HERE.parents[2].name == "homey-plugin":
+        return HERE.parents[3] / "homey.json"
+    if os.environ.get("HOMEY_CONFIG"):
+        return Path(os.environ["HOMEY_CONFIG"]).resolve()
+    d = Path.cwd().resolve()
+    for p in [d, *d.parents]:
+        if (p / ".claude" / "homey.json").is_file():
+            return p / ".claude" / "homey.json"
+    sys.exit("no .claude/homey.json found: run this in a folder set up with Homey")
+
+
+CONFIG = find_config()
 ROOT = CONFIG.parent.parent
 
 
@@ -63,6 +78,14 @@ def uninstall():
     print("uninstalled")
 
 
+def refresh():
+    """After a plugin update the watcher's script moved: point the job at this copy. Does nothing if no job exists."""
+    if not PLIST.exists():
+        return
+    if plistlib.loads(PLIST.read_bytes())["ProgramArguments"][1] != str(HERE / "homey_watch.py"):
+        install()
+
+
 def status():
     r = launchctl("print", f"{TARGET}/{LABEL}")
     if r.returncode:
@@ -79,7 +102,7 @@ def status():
 
 
 if __name__ == "__main__":
-    cmds = {"install": install, "uninstall": uninstall, "status": status}
+    cmds = {"install": install, "uninstall": uninstall, "status": status, "refresh": refresh}
     if sys.argv[1:] and sys.argv[1] in cmds:
         cmds[sys.argv[1]]()
     else:

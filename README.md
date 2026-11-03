@@ -70,25 +70,19 @@ You choose which agents to start and which models they use during setup.
 | Claude Code desktop app | For the pane and for starting agents as visible sessions. The terminal works for the rest, without the pane |
 | A Claude plan or API credit | Agents and the watcher spend it |
 | Obsidian 1.14 or later | With its command line turned on. It holds the memory, so it is required |
-| Python 3 and `rsync` | Both come with most Macs; Python may need the Xcode tools |
+| Python 3 and `git` | Both come with most Macs through the Xcode tools |
 
 ## Install
 
 1. Install Obsidian and turn on its command line in its settings.
-2. Get this repository, then copy the kit into the folder you want to use. This also installs the plugin for that folder only:
+2. In the folder you want to use, run this one line. It installs Homey for that folder only:
 
    ```bash
-   git clone https://github.com/markelayan/claude-homey-obsidian
-   sh claude-homey-obsidian/copy-kit.sh ~/path/to/your-folder
+   claude plugin install homey --marketplace markelayan/claude-homey-obsidian --scope project
    ```
 
-3. Open Claude Code in that folder and send:
-
-   ```
-   Read .claude/homey-plugin/BOOTSTRAP.md and follow it.
-   ```
-
-4. The agent interviews you (your name, areas, which agents, the watcher, bypass), builds the vault, starts the agents and runs a short demo.
+3. Open Claude Code in that folder and say `Set up Homey here`.
+4. The agent interviews you (your name, areas, which agents, the watcher, bypass), builds the vault, starts the agents and can run a short demo.
 
 > Starting agents as sessions works from a message typed in the desktop app, not over Remote Control. Setup falls back to background agents you will not see in the sidebar.
 
@@ -126,26 +120,36 @@ Open a session in the folder and talk. It picks up where the last one stopped, w
 
 | Where | What |
 |---|---|
-| Your folder | Vault notes, `.claude/homey.json`, `.claude/agents/`, `.claude/homey-plugin/`, project settings |
+| Your folder | Vault notes, `.claude/homey.json`, `.claude/agents/`, project settings |
 | `~/Library/LaunchAgents` | One watcher job per folder, if you turn the watcher on |
 | Claude Code plugin registry | One marketplace and plugin entry per folder |
 
 Homey has no server of its own. Your prompts and files go only where Claude Code already sends them.
 
-## Remove it
+## Update
 
 ```bash
-python3 .claude/homey-plugin/plugins/homey/scripts/homey_watch_install.py uninstall
+claude plugin update homey@claude-homey-obsidian
 ```
 
-Then run `claude plugin list` in the folder, and `claude plugin uninstall` for its `homey@...` entry with `--scope project`. Your notes stay: they are ordinary Markdown files.
+Then start a new session, which also points the watcher at the new version, and run `homey upgrade` in it to add any new settings. It never changes a value you set.
+
+## Remove it
+
+In a session, run `homey watcher uninstall`. Then, in a terminal in that folder:
+
+```bash
+claude plugin uninstall homey@claude-homey-obsidian --scope project
+```
+
+Your notes stay: they are ordinary Markdown files.
 
 ## When something goes wrong
 
 | Problem | Try |
 |---|---|
-| Not sure Obsidian is ready | `python3 .claude/homey-plugin/plugins/homey/bin/homey check` |
-| Agents do not wake | `python3 .claude/homey-plugin/plugins/homey/scripts/homey_watch_install.py status`, then read `.claude/homey-watch/watch.log` |
+| Not sure Obsidian is ready | `homey check` in a session |
+| Agents do not wake | `homey watcher status` in a session, then read `.claude/homey-watch/watch.log` |
 | No pane | `/reload-plugins`, then `/homey`. The pane uses an early-access feature of Claude Code, so it may not load on your build |
 | Changes do not show | `/reload-plugins`, or a new session |
 
@@ -155,7 +159,8 @@ Found a bug? [Open an issue](https://github.com/markelayan/claude-homey-obsidian
 
 | Path | What |
 |---|---|
-| `copy-kit.sh`, `bootstrap.sh`, `BOOTSTRAP.md` | Setup |
+| `.claude-plugin/marketplace.json` | The catalog the install line reads |
+| `plugins/homey/skills/homey-setup/` | Setup steps the agent follows |
 | `plugins/homey/skills/` | One skill per flow, plus Obsidian skills by kepano |
 | `plugins/homey/hooks/`, `plugins/homey/scripts/` | Hooks, watcher, pane |
 | `plugins/homey/bin/homey` | The command line agents use |

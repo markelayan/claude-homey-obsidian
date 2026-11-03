@@ -24,6 +24,7 @@
   homey agent-add <role> <local_id> <model>  record a started agent session as the owner of that role
   homey agent-add <role> --headless <model>  start the role with claude -p once and record it, with no app session
   homey check                                is Obsidian, which Homey requires, ready
+  homey watcher <install|uninstall|status>   the background job that wakes agents
   homey later <task>                         keep a question open, under For later in the pane
   homey take <session>                       JSON list of messages waiting for that open session; claims them
   homey advise <task> ["<question>"] [--plan <note>]...   a task note for the advisor, with a fixed packet; its result goes in <task>
@@ -1138,9 +1139,14 @@ def cmd_check():
         raise Bad(f"Obsidian does not know the vault {vault}: open this folder as a vault in Obsidian")
     print(f"Obsidian {m.group(0)} ready, vault {vault}")
 
+def cmd_watcher(rest):
+    script = Path(__file__).resolve().parent.parent / "scripts" / "homey_watch_install.py"
+    raise SystemExit(subprocess.run([sys.executable, str(script), *rest], cwd=ROOT, env=dict(os.environ, HOMEY_CONFIG=str(ROOT / ".claude" / "homey.json"))).returncode)
+
+
 def main():
     a = sys.argv[1:]
-    if not a or a[0] not in ("find", "get", "now", "data", "tasks", "task", "comment", "status", "result", "ask", "answer", "later", "link", "state", "bug", "bug-state", "changelog", "hosts", "deploy", "upgrade", "take", "advise", "escalate", "advisor", "check", "handoff", "claim-main", "agent-add"):
+    if not a or a[0] not in ("watcher", "find", "get", "now", "data", "tasks", "task", "comment", "status", "result", "ask", "answer", "later", "link", "state", "bug", "bug-state", "changelog", "hosts", "deploy", "upgrade", "take", "advise", "escalate", "advisor", "check", "handoff", "claim-main", "agent-add"):
         print(__doc__)
         sys.exit(2)
     c, rest = a[0], a[1:]
@@ -1163,6 +1169,7 @@ def main():
         elif c == "escalate": cmd_escalate(rest)
         elif c == "advisor": cmd_advisor(rest)
         elif c == "check": cmd_check()
+        elif c == "watcher": cmd_watcher(rest)
         elif c == "handoff": cmd_handoff(rest)
         elif c == "claim-main": cmd_claim_main(rest)
         elif c == "agent-add": cmd_agent_add(rest)
