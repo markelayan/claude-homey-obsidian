@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3
+
+- The danger guard judges what would run and where a delete lands, not words in text. Agents can clean up temp folders, `.work/`, build caches and named project files. Words in notes and searches no longer trip it.
+- The guard now catches deletes in backticks, `sh -c`, `eval`, `ssh` and `docker exec`, and by full path. Data, the home folder, `.git`, secrets, whole source folders, SQL deletes and order calls stay refused. Commands were judged in a trial, not run.
+- Answers pressed close together in the pane reach the session as one prompt, each question and answer set apart. An answer that lifts a guard still goes alone.
+- A bug note tells the capturer to write it up with `homey-bug`, not to verify it.
+- The "deletes go to Trash" rule is gone: it was never the user's.
+
 ## 0.4.2
 
 - Workers run the first command and judge by its result. Before this, a worker told by its own session history that it had no Bash kept refusing tasks, even with Bash back.

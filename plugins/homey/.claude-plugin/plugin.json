@@ -1,6 +1,6 @@
 {
   "name": "homey",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Long-term memory and agent orchestration for Claude Code, kept in an Obsidian vault",
   "author": {
     "name": "Mark Elayan and Claude"

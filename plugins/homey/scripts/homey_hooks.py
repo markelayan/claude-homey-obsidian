@@ -653,7 +653,7 @@ def home_write_regex():
     return H["homeWritePattern"].replace("{home}", re.escape(HOME)).replace("{stem}", re.escape(Path(HOME).stem))
 
 
-STEER_RULE = "Delete your own temp files with rm when the work ends; the danger guard allows rm inside a temp folder. Rules steer you; if the work needs it, go on. Ask the user only for a goal or scope change, spending money, protected-path work or deleting data; a decision blocks only its own task: if they have not answered, take the reversible path or go to the next task, and never stop while there is work and a plan."
+STEER_RULE = "Delete your own temp and work files with rm when the work ends: temp folders, `.work/` and build caches are yours. Rules steer you; if the work needs it, go on. Ask the user only for a goal or scope change, spending money, protected-path work or deleting data; a decision blocks only its own task: if they have not answered, take the reversible path or go to the next task, and never stop while there is work and a plan."
 BUG_RULE = 'Report any bug you find this run with `homey bug "<what happened>"`, including ones outside your task; never fix them unasked.'
 FORM_RULE = "join commands only with && or |; no redirects, ; or command substitution, and use single quotes around text with backticks or a dollar sign."
 EDIT_WORDS = {"none": "no files", "vault": "vault notes outside .claude", "vault-all": "any file in the vault", "project": "any project file outside .claude"}
@@ -1250,59 +1250,262 @@ def guard_problem(data, tool, tool_input):
     return None
 
 
-TEMP_ROOTS = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/", "$TMPDIR/", "${TMPDIR}/", tempfile.gettempdir().rstrip("/") + "/")
+TEMP_ROOTS = tuple(dict.fromkeys(["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/", tempfile.gettempdir().rstrip("/") + "/", os.path.realpath(tempfile.gettempdir()).rstrip("/") + "/"]))
+DELETERS = ("rm", "rmdir", "unlink", "shred")
+SHELLS = ("sh", "bash", "zsh", "dash")
+REMOTE = ("ssh", "docker", "kubectl", "nomad", "podman")
+# These only read, or only record text, so the words in their arguments run nothing.
+TEXT_PROGRAMS = ("grep", "egrep", "fgrep", "rg", "ag", "sed", "cat", "head", "tail", "wc", "ls", "stat", "echo", "printf", "sort", "uniq", "cut", "tr", "diff", "cmp", "jq", "gh", "obsidian", "tee", "true", "test", "[", "for", "case")
+HOMEY_TEXT = ("ask", "comment", "state", "result", "task", "bug", "changelog")
+# Folders of throwaway output: anything under them can go, recursively.
+WORK_DIRS = ("__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", "node_modules", ".venv", "dist", "build", ".next", ".turbo", ".cache")
 
 
-def without_temp_deletes(command):
-    """The command minus any `rm` that only touches a temp folder, so the danger guard judges the rest. Unsure means it stays."""
-    values = {}
-    for name, value in re.findall(r"\b(\w+)=\"?([^\s;\"&|]*)", command):
-        values.setdefault(name, []).append(value)
+def _delete_pattern(p):
+    return "rmdir" in p or "-delete" in p
 
-    def temp_value(v):
-        return v.startswith("$(mktemp") or any(v.startswith(r) and v[len(r):].strip("/") for r in TEMP_ROOTS)
-    loop_vars = set(re.findall(r"\b(?:for|read)\s+(\w+)", command))
-    temp_vars = {n for n, vs in values.items() if n not in loop_vars and all(temp_value(v) for v in vs)}
 
-    def is_temp(path):
-        if ".." in path or "`" in path or "$(" in path:
-            return False
-        m = re.fullmatch(r"\$\{?(\w+)\}?(/.*)?", path)
-        if m and m.group(1) in temp_vars:
-            return True
+def word_hit(p, text):
+    """A risky word as a word: `.truncate(` and `--vacuum-hours` are a method and a flag, not SQL."""
+    for m in re.finditer(p, text):
+        if m.start() == 0 or text[m.start() - 1] not in ".-_":
+            return m.group(0).strip()
+    return None
+
+
+def shell_values(command):
+    """Variables set once in this command, with their text. Shell state does not last between commands, so these are the only ones that can hold a value."""
+    values, seen = {}, set()
+    for name, value in re.findall(r"(?:^|[\s;&|(])(\w+)=(\"[^\"]*\"|'[^']*'|\$\([^)]*\)|[^\s;&|]*)", command):
+        values[name] = None if name in seen else value.strip("\"'")
+        seen.add(name)
+    for name in re.findall(r"\b(?:for|read)\s+(\w+)", command):
+        values[name] = None
+    return values
+
+
+def resolved_path(path, cwd, values):
+    """An absolute path, or None when the shell alone could say what it is."""
+    path = path.replace("$$", "0")
+    for _ in range(5):
+        if path.startswith("~"):
+            path = str(Path.home()) + path[1:]
+        m = re.search(r"\$\{?(\w+)\}?", path)
+        if not m:
+            break
+        name = m.group(1)
+        value = values.get(name, os.environ.get(name) if name in ("HOME", "TMPDIR") else None)
+        if value is None:
+            return None
+        if value.startswith("$(mktemp"):
+            value = TEMP_ROOTS[0] + "mktemp"
+        elif "$(" in value or "`" in value:
+            return None
+        path = path[:m.start()] + value + path[m.end():]
+    if "$" in path or "`" in path:
+        return None
+    if not path.startswith("/"):
+        if cwd is None:
+            return None
+        path = os.path.join(cwd, path)
+    return os.path.normpath(path)
+
+
+def delete_problem(target, recursive, cwd, values):
+    """Why this delete must not run, or None. Judged on where it lands: temp and work folders are the agent's own; the data, the home folder and the system are not."""
+    full = resolved_path(target, cwd, values)
+    if full is None and any(target.startswith(r) and not target[len(r):].startswith(("$", "*")) and "/.." not in target for r in TEMP_ROOTS):
+        return None  # a loop name inside a temp folder: `/tmp/out_$t.csv`
+    if full is None:
+        return f"cannot tell what `{target}` is from this command; set the variable in the same command, as shell state does not last"
+    base = re.split(r"[*?\[]", full)[0]
+    globbed = base != full
+    base = base.rstrip("/") or "/"
+    real = os.path.realpath(base)
+    for path in {base, real}:
         for root in TEMP_ROOTS:
-            if path.startswith(root):
-                rest = path[len(root):].strip("/")
-                return bool(rest) and not rest.startswith("*")
-        return False
+            bare = root.rstrip("/")
+            if path.startswith(root) and not (globbed and path == bare):
+                if real.startswith(TEMP_ROOTS) or real == path:
+                    return None
+    root = str(project_root().resolve())
+    if not (real == root or real.startswith(root + os.sep)):
+        return f"`{target}` is outside this project and the temp folders"
+    parts = Path(real).relative_to(root).parts
+    if not parts or (globbed and len(parts) == 0):
+        return f"`{target}` is the project itself"
+    if ".git" in parts or any(p.startswith(".env") for p in parts) or real == str(Path(CONFIG_FILE).resolve()):
+        return f"`{target}` holds git history, secrets or Homey's settings"
+    vault = str(VAULT.resolve())
+    if real == vault or (vault.startswith(real + os.sep)):
+        return f"`{target}` holds the vault"
+    if real.startswith(vault + os.sep) and len(Path(real).relative_to(vault).parts) == 1 and (globbed or os.path.isdir(real)):
+        return f"`{target}` is a whole vault folder"
+    if any(p in WORK_DIRS for p in parts):
+        return None
+    if ".work" in parts[:-1] or (".work" in parts and globbed):
+        return None
+    if recursive or globbed or os.path.isdir(real):
+        return f"`{target}` is a folder of project files; delete named files, or use `git rm`, where a review sees it"
+    return None
 
-    kept = []
-    for part in re.split(r"(&&|\|\||;|\n)", command):
-        try:
-            words = shlex.split(part)
-        except ValueError:
-            words = []
-        if words and words[0] in ("rm", "/bin/rm"):
-            targets = [w for w in words[1:] if not w.startswith("-")]
-            if targets and all(is_temp(t) for t in targets):
+
+def seg_deletes(words):
+    """(targets, recursive) when this command deletes, else None. targets may hold None when they cannot be known."""
+    prog, args = command_core(words)
+    while prog == "sudo" and args:
+        prog, args = command_core(args)
+    clean, skip = [], False
+    for a in args:
+        if a == "\x00>":
+            skip = True
+        elif skip:
+            skip = False
+        else:
+            clean.append(a)
+    if prog in DELETERS:
+        flags = [a for a in clean if a.startswith("-") and a != "--"]
+        recursive = any(f in ("--recursive",) or (not f.startswith("--") and re.search("[rR]", f)) for f in flags)
+        return [a for a in clean if not a.startswith("-")], recursive
+    if prog == "find" and ("-delete" in clean or any(a in ("-exec", "-execdir", "-ok") and i + 1 < len(clean) and os.path.basename(clean[i + 1]) in DELETERS for i, a in enumerate(clean))):
+        paths = []
+        for a in clean:
+            if a.startswith("-") or a in ("(", "!"):
+                break
+            paths.append(a)
+        return paths or ["."], True
+    if prog == "xargs" and any(os.path.basename(a) in DELETERS for a in clean):
+        return [None], True
+    return None
+
+
+def heredocs(command):
+    """(program, body) of each heredoc."""
+    out = []
+    for m in re.finditer(r"^(.*?)<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)^\s*\2\s*$", command, re.M | re.S):
+        words = (shell_words(m.group(1).split("\n")[-1]) or [[]])[-1]
+        out.append((command_core(words)[0], m.group(3)))
+    return out
+
+
+def danger_in(command, cwd, depth=0):
+    """What is dangerous in this command, or None. It looks at what would run, and where a delete lands, not at words in text."""
+    checks = [p for p in H["askFirst"] if not _delete_pattern(p)]
+    delete_words = [p for p in H["askFirst"] if "rmdir" in p]
+    if depth > 3:
+        return next((m.group(0).strip() for m in (re.search(p, command) for p in H["askFirst"]) if m), None)
+    values = shell_values(command)
+    names = [n for n, v in values.items() if v and v.endswith("/bin/homey")]
+    funcs = re.findall(r"\b(\w+)\(\)\s*\{\s*python3\s+\S*/bin/homey\s+\"\$@\"", command)
+    for prog, body in heredocs(command):
+        if prog in SHELLS:
+            found = danger_in(body, cwd, depth + 1)
+            if found:
+                return found
+        elif prog not in TEXT_PROGRAMS:
+            found = next((w for w in (word_hit(p, body) for p in checks) if w), None)
+            if found:
+                return found
+    bare = re.sub(r"^(.*?<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n)(.*?)^\s*\2\s*$", r"\1", command, flags=re.M | re.S)
+    # Single quotes run nothing; a substitution anywhere else does.
+    for m in re.finditer(r"\$\(((?:[^()]|\([^()]*\))*)\)|`([^`]*)`", re.sub(r"'[^']*'", "''", bare)):
+        inner = m.group(1) if m.group(1) is not None else m.group(2)
+        found = danger_in(inner, cwd, depth + 1)
+        if found:
+            return found
+    for seg in shell_words(command):
+        while seg and seg[0] in ("do", "then", "else", "elif", "if", "while", "until", "{", "!"):
+            seg = seg[1:]
+        words = [w for w in seg if w != "\x00>"]
+        if not words:
+            continue
+        prog, args = command_core(words)
+        if prog == "eval":
+            found = danger_in(" ".join(args), cwd, depth + 1)
+            if found:
+                return found
+            continue
+        if not prog:
+            continue  # only sets a variable
+        if prog == "ssh" and len([a for a in args if not a.startswith("-")]) > 1:
+            found = danger_in(args[-1], None, depth + 1)
+            if found:
+                return found
+            continue
+        if prog in ("docker", "podman") and args[:1] == ["exec"]:
+            rest, i = args[1:], 0
+            while i < len(rest) and rest[i].startswith("-"):
+                i += 2 if rest[i] in ("-u", "-e", "-w", "--user", "--env", "--workdir") else 1
+            found = danger_in(shlex.join(rest[i + 1:]), None, depth + 1)
+            if found:
+                return found
+            continue
+        if prog == "cd":
+            target = next((a for a in args if not a.startswith("-")), "~")
+            cwd = resolved_path(target, cwd, values)
+            continue
+        if prog in SHELLS:
+            if "-c" in args and args.index("-c") + 1 < len(args):
+                found = danger_in(args[args.index("-c") + 1], cwd, depth + 1)
+                if found:
+                    return found
                 continue
-        kept.append(part)
-    return "".join(kept)
+        deletes = seg_deletes(seg)
+        if deletes is not None:
+            targets, recursive = deletes
+            if not targets:
+                continue
+            for target in targets:
+                reason = "the targets come from another command" if target is None else delete_problem(target, recursive, cwd, values)
+                if reason:
+                    return reason
+            continue
+        if prog in TEXT_PROGRAMS or prog == "git" or (homey_call(seg) or ("",))[0] in HOMEY_TEXT:
+            if prog == "git":
+                sub = next((a for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] not in ("-C", "-c"))), "")
+                if (sub == "reset" and "--hard" in args) or sub == "clean":
+                    return "git " + sub
+            continue
+        if len(words) > 1 and words[0] in funcs and words[1] in HOMEY_TEXT:
+            continue
+        if len(words) > 2 and words[0].startswith("python") and words[1].strip("${}") in names and words[2] in HOMEY_TEXT:
+            continue
+        # A wrapper such as `timeout 5 <deleter> x`: judge what it runs.
+        at = next((i for i, a in enumerate(seg) if os.path.basename(a) in DELETERS), None)
+        if at is not None and prog not in REMOTE:
+            found = danger_in(shlex.join(w for w in seg[at:] if w != "\x00>"), cwd, depth + 1)
+            if found:
+                return found
+            continue
+        text = " ".join(words)
+        for p in checks + (delete_words if prog in REMOTE else []):
+            found = word_hit(p, text)
+            if found:
+                return found
+    return None
+
+
+def command_danger(command, cwd):
+    """danger_in, or the plain word match if it trips on an odd command: a guard fault must never open the door."""
+    try:
+        return danger_in(command, cwd)
+    except Exception:
+        return next((m.group(0).strip() for m in (re.search(p, command) for p in H["askFirst"]) if m), None)
 
 
 def guard(data):
     tool = data.get("tool_name", "")
     tool_input = data.get("tool_input") or {}
     command = tool_input.get("command", "") if tool == "Bash" else ""
-    command = without_temp_deletes(command) if command else command
     if approval_stamp(data.get("session_id")).exists():
         return
-    if on("dangerGuard") and (any(re.search(p, command) for p in H["askFirst"]) or (tool.startswith("mcp__") and re.search(H["tradeToolPattern"], tool))):
+    danger = command_danger(command, data.get("cwd") or os.getcwd()) if command and on("dangerGuard") else None
+    if on("dangerGuard") and (danger or (tool.startswith("mcp__") and re.search(H["tradeToolPattern"], tool))):
         if os.environ.get("HOMEY_TASK"):
-            found = next((m.group(0).strip() for m in (re.search(p, command) for p in H["askFirst"]) if m), tool)
+            found = danger or tool
             decide("deny", f"Danger guard matched `{found}` in this command. A task run gets no approval, so do not retry it. If that is only words in text you are saving to the note, reword them, for example `order send` for a call name. If you really need it run, set status blocked and comment what you need.")
             return
-        problem = ("ask", "Danger guard: this deletes something, starts a stopped container or touches orders.")
+        problem = ("ask", f"Danger guard: {danger or tool}. It deletes something it should not, starts a stopped container or touches orders.")
     else:
         problem = guard_problem(data, tool, tool_input)
     if problem:

@@ -5,6 +5,9 @@ const REFRESH_MS = 15_000     // while the pane is open
 const IDLE_EVERY = 4          // otherwise every 4th pass
 const LATER = 'later'         // keep the question open, under For later; Homey is not woken
 const QUIET = '-'             // an answer that needs no action: saved in the note, Homey is not woken
+const ANSWER_CHECK_MS = 5_000 // how often held answers are looked at
+const ANSWER_QUIET_PASSES = 2 // passes with no new answer before they go out
+const LIFT = /^(\.ok|approved|i approve)\b/i // starts a message that lifts a guard
 
 let data = null     // last JSON from `homey data`
 let problem = ''    // last failure text, shown instead of data
@@ -15,6 +18,8 @@ let expanded = ''   // name of the task row open in the pane
 let newOwner = ''   // owner picked for a new task
 let showNew = false // New task is rarely used. It stays closed until asked for
 let askOther = ''   // question showing its free-text answer
+let heldAnswers = []  // answers pressed, waiting to go out as one prompt
+let quietPasses = 0   // passes since the last answer pressed
 
 async function run($, args) {
   try {
@@ -216,7 +221,27 @@ async function answer($, ask, text, reply) {
   const session = await $.session.id()
   // The session whose pane was pressed gets the answer, and is main from now on.
   await run($, ['claim-main', '--session', session])
-  void $.prompt.submit({ text: reply + '\n\nThis answers the question in ' + ask.note + '. Read its Context first, act once, then record what you did in that note.', asUser: true })
+  // A guard lift must start its own message, so it never waits in a batch.
+  if (LIFT.test(reply)) return void $.prompt.submit({ text: oneAnswer({ ask, reply }), asUser: true })
+  heldAnswers.push({ ask, reply })
+  quietPasses = 0
+}
+
+function oneAnswer({ ask, reply }) {
+  return reply + '\n\nThis answers the question in ' + ask.note + '. Read its Context first, act once, then record what you did in that note.'
+}
+
+function manyAnswers(list) {
+  const items = list.map(({ ask, reply }, i) => (i + 1) + '. Question: ' + ask.question + '\nAnswer: ' + reply + '\nNote: ' + ask.note)
+  return list.length + ' answers from the pane. For each one, read its note\'s Context first, act once, then record what you did in that note.\n\n---\n\n' + items.join('\n\n---\n\n')
+}
+
+// Answers pressed close together go out as one prompt, once the user has paused.
+function flushAnswers($) {
+  if (!heldAnswers.length || (quietPasses += 1) < ANSWER_QUIET_PASSES) return
+  const list = heldAnswers
+  heldAnswers = []
+  void $.prompt.submit({ text: list.length === 1 ? oneAnswer(list[0]) : manyAnswers(list), asUser: true })
 }
 
 function askRow($, ui, ask) {
@@ -484,6 +509,7 @@ export function register(on) {
       if (open || passes % IDLE_EVERY === 0) await refresh($)
     })
     $.clock.every(REFRESH_MS, () => takeMessages($))
+    $.clock.every(ANSWER_CHECK_MS, () => flushAnswers($))
     await $.command.register({
       name: 'homey',
       description: 'Vault status: now, find <term>, or no argument to open the pane',

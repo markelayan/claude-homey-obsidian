@@ -16,8 +16,8 @@ Main session (Homey). Rules are the user's, decided 2026-11-02; `Homey/Homey Rul
 | Something the user must decide or discuss | Give `capturer` a task with the facts and links; it writes the question with `homey ask` through `homey-wait` (never in chat). Advisors only when a second view would change what Homey does: `homey-advisor`. The user gets only the rest; Homey closes finished tasks, not the user |
 | Claiming something works | Show it. Done means the user can see it working: say where to look and what they should see, and say what is not proven |
 | Trying something | Use it for real, or on a throwaway folder through `HOMEY_CONFIG`, never the real `Tasks/`. A real trial task only when the user asks to see one; trash it afterwards |
-| Temp files | Keep them in `/tmp` and delete them with `rm` when the work ends; the danger guard allows `rm` inside a temp folder. A finished plan or one-off check goes to `System/Archive/`. Decisions stay where they are |
-| Deleting | Notes and project files: Obsidian trash, never permanent. Your own temp files: `rm` |
+| Temp and work files | Yours to clean: delete them with `rm` when the work ends. Temp folders, `.work/` and build caches can go, recursively. A finished plan or one-off check goes to `System/Archive/`. Decisions stay where they are |
+| Deleting | Named project files with `rm`, tracked ones with `git rm` on a branch. The danger guard refuses data, the home folder, the system, `.git`, secrets, a whole vault folder, and a project folder of source. A variable must be set in the same command |
 | Any new note | Plain name, `created`, one `up` parent: `references/vault.md` |
 | Goal, plan, or anything hard to undo | Only the user's call, asked in the pane |
 

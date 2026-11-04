@@ -62,3 +62,5 @@ The session whose pane was pressed gets the answer as a prompt, and becomes main
 
 ## Advisor
 Homey asks the advisor by hand, with `homey advise`, on the few questions that need it; the user has nothing to press. Until it answers the row says `Advisor is thinking`. Then only `Junior recommends: ...` shows on the row; the rest is in the note, for Homey. `Senior recommends: ...` shows under it. The advisor's task shows on the board like any other. Skill `homey-advisor`.
+
+Answers pressed close together go to the session as one prompt, each question and answer set apart, about 10 seconds after the last press. An answer starting `.ok`, `approved` or `I approve` goes alone at once, since it must start its own message. A session that closes in those seconds loses the prompt; the answer stays saved in its note.
