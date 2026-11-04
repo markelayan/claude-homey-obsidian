@@ -19,6 +19,40 @@ You talk to one lead session. It remembers across sessions, hands the work to ch
 | One expensive session reads and edits everything | The lead decides. Cheap agents read, edit and write notes. A separate checker reviews the work |
 | You have to watch it all the time | Decisions wait in a pane with their full context. A waiting decision blocks only its own task; other work goes on |
 
+## Features
+
+| Feature | What it does for you |
+|---|---|
+| Memory in plain notes | Decisions, facts, projects and logs are Markdown in your own vault. You can read, edit and search them |
+| Resume at every start | Each new session gets your rules, the status and the next step, without being asked |
+| Run plan | Each session keeps a plan any other session can pick up, so a crash or a long session loses little |
+| Task notes | Work goes to an agent as one note: brief, comments, result. The note is the whole record |
+| Watcher | Wakes the agent that owns a new task or comment, and tells the lead when it finishes. Limits stop a runaway loop |
+| Lead and workers | One lead designs and decides. Cheap agents read, edit and write notes. A new checker reviews the work |
+| The pane | One place to see sessions, questions, projects, decisions and bugs. Runs as a mod in the Claude app |
+| Questions with context | Each decision waits with how it arose, what each answer does and the lead's pick. Answers pressed close together reach the session as one prompt |
+| Bugs tab | Report with `.bug`. It is written up, checked by a new agent, and tracked until fixed |
+| Decisions tab | What was decided and why, linked from the daily log |
+| Projects board | Projects move across statuses with one line each |
+| Danger guard | Judges what a command would run and where a delete lands. Agents can clean up their own work; data, secrets and order calls stay refused |
+| Role limits | Each agent can only do its job. Rules steer by reminder; hard blocks stay few |
+| Code flow | An exact task, a commit linked to it, an independent check, then docs and one changelog line |
+| Host checks and deploy steps | Fixed checks record state with the time read. A deploy task must state its steps |
+| Advisors and handoff | Ask a second view when it would change the decision. Move the lead to a new session cheaply |
+| Mind maps | Canvases in the vault, made by their own agent |
+
+## See it
+
+<table><tr>
+<td valign="top"><img src="assets/pane-now.png" width="300" alt="The Now tab: what needs you, the sessions, and the next step"></td>
+<td valign="top"><img src="assets/pane-bugs.png" width="300" alt="The Bugs tab: each bug with its state and who reported it"></td>
+</tr><tr>
+<td><b>Now.</b> What needs you, each session, and the next step.</td>
+<td><b>Bugs.</b> Each bug with its state and who reported it.</td>
+</tr></table>
+
+Grey bars cover private project names in these screenshots.
+
 ## How it works
 
 ```mermaid
