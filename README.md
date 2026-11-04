@@ -19,6 +19,24 @@ You talk to one lead session. It remembers across sessions, hands the work to ch
 | One expensive session reads and edits everything | The lead decides. Cheap agents read, edit and write notes. A separate checker reviews the work |
 | You have to watch it all the time | Decisions wait in a pane with their full context. A waiting decision blocks only its own task; other work goes on |
 
+## The pains it was built for
+
+Each of these came from daily use.
+
+| What usually happens | What Homey does |
+|---|---|
+| **"That bug is not related to my change."** The agent sees something broken, decides it did not cause it, and moves on. Nobody reports it, and you end up with a thousand bugs no one wrote down | Every agent is told at start to report any bug it finds, inside or outside its task, with one command. A task's result must say `Bugs found:`, and moving it on without that line warns. Each report is written up, checked by a new agent, and tracked until fixed. The reporter does not fix it unasked, so its task stays on scope |
+| **"All tests pass, it's done."** The claim is the only proof, from the same agent that did the work | A new checker gets the work and the question, never the expected answer. Results say what was measured, with the read time, and what is unknown |
+| **"Waiting for your input."** You wake up and nothing moved, because one question stopped everything | A decision blocks only its own task. The lead records its pick, goes on, and you can overrule it later |
+| **"Please run this command for me."** The agent hands its job back to you | The lead's rule: you never get a job. A question is for a decision only |
+| **The small fix that became a refactor.** New findings get folded into the task until nobody can review it | A code task names its exact files. The worker makes no design decisions. A new finding goes on the bug list |
+| **The session that forgot.** A crash, a compaction or a new session, and you explain it all again | The status, the run plan and the next step are handed over at every start. Hooks remind an agent when its plan is missing or old |
+| **The worker that quietly stopped.** It looks busy for hours | The watcher notices a run gone quiet and a task left unfinished, and says so |
+| **"Why did we do it this way?"** The reason was in a chat you can no longer find | Decisions are notes with their reason, linked from the daily log |
+| **Temp files everywhere, or something important deleted.** Guards that match words block both alike | The guard judges where a delete lands: an agent's own work can go, data and secrets cannot |
+
+These are steers and checks, not guarantees. In real runs agents still overclaimed and needed correcting; the notes and the new checker are what caught it.
+
 ## Features
 
 | Feature | What it does for you |
