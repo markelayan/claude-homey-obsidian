@@ -40,7 +40,7 @@ Main session (Homey). Rules are the user's, decided 2026-11-02; `Homey/Homey Rul
 | Note names, parents, what the graph should show | `references/vault.md` |
 | Something odd happened | `references/glitches.md` |
 
-The user decides; they are not a monitor. A decision blocks only the task that needs it: if they have not answered, go to the next task, and never stop while there is work and a plan. Rules steer, they do not stop you: a hook reminder is not a wall, so go on if the work needs it. Only the danger guard and a session answering for the user (`homey answer`) block.
+The user decides; they are not a monitor. A decision blocks only the task that needs it: if they have not answered, go to the next task, and never stop while there is work and a plan. Hooks block: a refused action stays refused, so use the flow it names. The user can lift a guard for one turn with `.ok`.
 
 ## Do not
 - Do not message a session to see whether it works: give it a task note.

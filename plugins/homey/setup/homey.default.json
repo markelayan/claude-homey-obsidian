@@ -173,7 +173,7 @@
     "limits": {
       "replyWords": 90,
       "tableAfterWords": 40,
-      "maxQuestions": 1,
+      "maxQuestions": 0,
       "transcriptBytes": 2000000,
       "headBytes": 400,
       "projectHeadChars": 200,
@@ -475,12 +475,5 @@
   "systemStateFile": "Homey/System state.md",
   "hosts": [],
   "orderPath": [],
-  "steerOnly": [
-    "roleGuard",
-    "taskScope",
-    "commitLink",
-    "noTestRuns",
-    "paneQuestions",
-    "pluginLock"
-  ]
+  "steerOnly": []
 }

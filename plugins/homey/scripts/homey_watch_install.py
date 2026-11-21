@@ -46,7 +46,7 @@ def plist(python=sys.executable, home=str(Path.home())):
         "RunAtLoad": True,
         "KeepAlive": True,
         "ThrottleInterval": 10,
-        "ProcessType": "Background",
+        "ProcessType": "Standard",
         "EnvironmentVariables": {
             "HOMEY_CONFIG": str(CONFIG),
             "HOME": home,

@@ -491,14 +491,21 @@ def cmd_task_write(c, rest):
         extra = {k: v for k, v in (("kind", kind), ("files", files)) if v}
         print(rel(ht.create(task_dir(), rest[0], rest[1], rest[2], extra or None)))
     elif c == "ask":
+        urgency = "normal"
+        if "--urgency" in rest:
+            i = rest.index("--urgency")
+            if i + 1 >= len(rest) or rest[i + 1] not in ("urgent", "normal", "low"):
+                raise Bad("--urgency takes one of: urgent, normal, low")
+            urgency = rest[i + 1]
+            rest = rest[:i] + rest[i + 2:]
         if rest and not rest[0].rstrip().endswith("?"):
             warn("this reads as a job for the user, not a decision: a command or a next step of the plan is the lead's to do")
         if len(rest) < 3:
-            raise Bad('usage: homey ask "<question>" "<why>" "<context>" ["<label>|<reply>"...]')
+            raise Bad('usage: homey ask "<question>" "<why>" "<context>" ["<label>|<reply>"...] [--urgency urgent|normal|low]')
         pairs = [o.split("|", 1) for o in rest[3:]]
         if any(len(p) != 2 or not p[0].strip() or not p[1].strip() for p in pairs):
             raise Bad('options look like "<label>|<reply>"')
-        print(rel(ht.create_ask(task_dir(), USER_ID, rest[0], rest[1], rest[2], [(p[0].strip(), p[1].strip()) for p in pairs])))
+        print(rel(ht.create_ask(task_dir(), USER_ID, rest[0], rest[1], rest[2], [(p[0].strip(), p[1].strip()) for p in pairs], urgency)))
     elif c == "later":
         if len(rest) != 1:
             raise Bad("usage: homey later <task>")

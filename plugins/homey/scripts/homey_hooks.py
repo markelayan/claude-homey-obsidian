@@ -61,7 +61,7 @@ def load_config():
         raise Bad("homey.json missing: " + ", ".join(miss))
     h = cfg["hooks"]
     lim = h["limits"] if isinstance(h["limits"], dict) else {}
-    badl = [k for k in LIMITS if not isinstance(lim.get(k), int) or lim[k] < 1]
+    badl = [k for k in LIMITS if not isinstance(lim.get(k), int) or lim[k] < (0 if k == "maxQuestions" else 1)]
     if badl:
         raise Bad("homey.json hooks.limits missing or not positive ints: " + ", ".join(badl))
     unknown = [c for c in h["checks"] if c not in CHECKS] if isinstance(h["checks"], list) else ["checks is not a list"]
@@ -434,6 +434,8 @@ def reply_problem(text):
     if words > limit:
         return f"Your reply is {words} words; the limit is {limit}. Move detail to a vault note, then send a shorter reply with one table or diagram and a link."
     if prose.count("?") > LIM["maxQuestions"]:
+        if not LIM["maxQuestions"]:
+            return f"Your reply asks {USER} a question in chat. Decisions go to the pane: hand `capturer` a task with skill homey-wait, or drop the question."
         return "Your reply asks more than one question. Keep only the one that matters most."
     if words > LIM["tableAfterWords"] and "|---" not in text and "```" not in text:
         return "Your reply has no table or diagram. Resend it with one."
@@ -653,7 +655,7 @@ def home_write_regex():
     return H["homeWritePattern"].replace("{home}", re.escape(HOME)).replace("{stem}", re.escape(Path(HOME).stem))
 
 
-STEER_RULE = "Delete your own temp and work files with rm when the work ends: temp folders, `.work/` and build caches are yours. Rules steer you; if the work needs it, go on. Ask the user only for a goal or scope change, spending money, protected-path work or deleting data; a decision blocks only its own task: if they have not answered, take the reversible path or go to the next task, and never stop while there is work and a plan."
+STEER_RULE = "Delete your own temp and work files with rm when the work ends: temp folders, `.work/` and build caches are yours. Hooks block: a refused action stays refused, use the flow it names. Ask the user only for a goal or scope change, spending money, protected-path work or deleting data; a decision blocks only its own task: if they have not answered, take the reversible path or go to the next task, and never stop while there is work and a plan."
 BUG_RULE = 'Report any bug you find this run with `homey bug "<what happened>"`, including ones outside your task; never fix them unasked.'
 FORM_RULE = "join commands only with && or |; no redirects, ; or command substitution, and use single quotes around text with backticks or a dollar sign."
 EDIT_WORDS = {"none": "no files", "vault": "vault notes outside .claude", "vault-all": "any file in the vault", "project": "any project file outside .claude"}
@@ -1216,6 +1218,8 @@ def guard_problem(data, tool, tool_input):
     command = tool_input.get("command", "") if tool == "Bash" else ""
     path = Path(tool_input.get("file_path") or tool_input.get("notebook_path") or "") if tool in H["editTools"] else None
     skills_needed = set()
+    if on("skillCheck") and main_role and role == main_role and is_main_role(data, role) and (path or command):
+        skills_needed.add("homey-operate")
     if path:
         full = str(path.resolve())
         r_info = role_info(role) if on("roleGuard") else None

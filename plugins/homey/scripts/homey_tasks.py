@@ -92,7 +92,7 @@ def create(folder, owner, title, brief, extra=None):
     return path
 
 
-def create_ask(folder, owner, question, why, context, options):
+def create_ask(folder, owner, question, why, context, options, urgency="normal"):
     """A question for the user, who owns the note, so the watcher leaves it alone. options: (label, reply) pairs.
     Context is what Homey reads when the answer comes: how it arose, what is already done, what each answer does."""
     if not context.strip():
@@ -104,7 +104,7 @@ def create_ask(folder, owner, question, why, context, options):
     if not options:
         raise TaskError("a question needs at least one option")
     path = create(folder, owner, question, why)
-    t = path.read_text()
+    t = path.read_text().replace("\n---\n", f"\nurgency: {urgency}\n---\n", 1)
     lines = "".join(f"- {one_line(l)} | {one_line(r)}\n" for l, r in options)
     write(path, t.replace("## Comments\n", f"## Context\n{context.strip()}\n\n## Options\n{lines}\n## Comments\n", 1))
     return path
@@ -196,7 +196,7 @@ def read_task(path):
             return {"path": str(path), "name": path.stem, "bad": "not a task note"}
         return {"path": str(path), "name": path.stem, "owner": p.get("owner", ""), "status": p.get("status", ""),
                 "summary": p.get("summary", ""), "comments": comments(text), "result": section(text, "Result").strip(),
-                "brief": section(text, "Brief").strip(), "options": options(text), "later": p.get("later", ""), "advice": optional_section(text, "Advice"), "senior": optional_section(text, "Senior advice")}
+                "brief": section(text, "Brief").strip(), "options": options(text), "later": p.get("later", ""), "urgency": p.get("urgency", "normal"), "advice": optional_section(text, "Advice"), "senior": optional_section(text, "Senior advice")}
     except (OSError, UnicodeDecodeError, TaskError) as e:
         return {"path": str(path), "name": path.stem, "bad": str(e)}
 

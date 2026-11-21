@@ -144,6 +144,25 @@ def finished_now(tasks, state, cfg):
     return out
 
 
+REFRESH_HOURS = {"urgent": 1, "normal": 4, "low": 24}
+
+
+def stale_questions(tasks, state, cfg, now, touched):
+    """Open questions for the user, not put off, that nobody has touched for their urgency's hours."""
+    hours = {**REFRESH_HOURS, **(cfg.get("refreshHours") or {})}
+    out = []
+    for t in tasks:
+        if t.get("bad") or t["owner"] not in cfg["people"] or t["status"] not in ("todo", "doing"):
+            continue
+        if t.get("later") or not t.get("options"):
+            continue
+        wait = hours.get(t.get("urgency") or "normal", hours["normal"]) * 3600
+        last = max(touched(t["path"]), task_state(state, t["path"]).get("refreshed", 0))
+        if now - last >= wait:
+            out.append(t)
+    return out
+
+
 def stall_setting(cfg, key):
     return cfg.get(key, STALL_DEFAULTS[key])
 
@@ -442,6 +461,16 @@ class Watcher:
         self.state["runs"][owner] = {"pid": proc.pid, "path": action["path"], "started": time.time(), "out": str(out), "offset": size}
         self.log(f"nudge {owner} {action['path']}: {action['reason']}")
 
+    def notify_refresh(self, t):
+        """A waiting question went stale. The asker checks it when idle; it never messages the user."""
+        f = ht.inbox_file(self.state_dir, self.cfg["homeySession"], t["path"])
+        f.parent.mkdir(parents=True, exist_ok=True)
+        text = (f"Question still waiting on {self.user}, urgency {t.get('urgency') or 'normal'}: {t['name']}. Note: {t['path']} . "
+                f"Read it and search what is written down. If it is answered or no longer applies, record why with `homey comment` and `homey result`, then `homey status <task> done`. "
+                f"If only {self.user} can answer, update its Context with what is true today and leave it. Do not ask {self.user} in chat.")
+        ht.write(f, json.dumps({"path": t["path"], "notice": True, "prompt": text}))
+        self.log(f"notice refresh {t['path']}")
+
     def tick(self):
         self.refresh_config()
         self.finish_runs()
@@ -476,6 +505,16 @@ class Watcher:
                 self.log(f"{a['kind']} failed {a['path']}: {ht.one_line(e)[:160]}")
         for t in finished_now(tasks, self.state, self.cfg):
             self.notify_homey(t)
+        if self.cfg.get("homeySession"):
+            for t in stale_questions(tasks, self.state, self.cfg, time.time(), lambda p: os.path.getmtime(p)):
+                try:
+                    self.notify_refresh(t)
+                except OSError as e:
+                    self.log(f"refresh failed {t['path']}: {ht.one_line(e)[:160]}")
+                    continue
+                st = task_state(self.state, t["path"])
+                st["refreshed"] = time.time()
+                self.state["tasks"][t["path"]] = st
         nudged = {a["path"] for a in actions if a["kind"] == "nudge"}
         for t in tasks:
             if not t.get("bad"):

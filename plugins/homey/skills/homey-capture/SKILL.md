@@ -9,6 +9,7 @@ Agent `capturer`, in the background. The main session sends the user's words and
 ## Steps
 Frontmatter is `type`, `summary`, `created`, `up`, between `---` lines. Vault rules: `homey-operate`, `references/vault.md`.
 1. Read the words given. Keep the user's meaning; add no ideas of your own.
+   Then search the vault for the same idea, to-do or topic. If it exists, add to that note instead of making a new one. Put related notes in as `[[links]]`.
 2. To-do for a known project (`Grep` `type: project`): append `- [ ] <task>` under `## Tasks`, which is last in the note.
 3. Anything else: create `Inbox/<short title>.md` inside the vault folder your agent file or nudge names, with `type: capture`, `summary`, `created`, `up`, then `## Said` (the user's words) and `## Context`.
 4. If asked to gather facts, read only what the brief names and add them under `## Facts`, each with its source.
